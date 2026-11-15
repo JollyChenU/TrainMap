@@ -104,3 +104,14 @@ export interface ReachabilityResponse {
   reachable_city_count: number;
   reachable_station_count: number;
 }
+
+export interface ExportBootstrap {
+  result: ReachabilityResponse;
+  origin_stations: Station[];
+}
+
+declare global {
+  interface Window {
+    __TARINMAP_EXPORT_DATA__?: ExportBootstrap;
+  }
+}

@@ -59,6 +59,34 @@ def test_reachability_and_offline_export() -> None:
         assert "https://" not in html
 
 
+def test_online_export_inlines_the_production_frontend() -> None:
+    """在线 HTML 应复用正式前端且不依赖本机静态资源或后端。"""
+
+    response = client.post(
+        "/api/reachability",
+        json={
+            "origin_city_id": "hangzhou",
+            "start_at": "2026-11-20T20:00:00+08:00",
+            "end_at": "2026-11-21T12:00:00+08:00",
+            "train_types": ["G", "D", "K"],
+            "transfers_enabled": False,
+        },
+    )
+    assert response.status_code == 200
+
+    export = client.get(
+        f"/api/results/{response.json()['query_id']}/export",
+        params={"mode": "online"},
+    )
+    assert export.status_code == 200
+    document = export.text
+    assert "window.__TARINMAP_EXPORT_DATA__=" in document
+    assert '"origin_stations"' in document
+    assert "/assets/" not in document
+    assert "tile.openstreetmap.org" not in document
+    assert "data:text/javascript;base64," in document
+
+
 def test_invalid_window_returns_validation_error() -> None:
     """到达截止时间不晚于出发时间时应返回可理解的校验错误。"""
 

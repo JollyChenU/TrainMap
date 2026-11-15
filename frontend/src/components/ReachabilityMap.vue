@@ -1,7 +1,13 @@
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, ref, watch } from "vue";
 import L from "leaflet";
+import { maplibreGL } from "@maplibre/maplibre-gl-leaflet";
+import { setWorkerUrl } from "maplibre-gl";
+import maplibreWorkerUrl from "maplibre-gl/dist/maplibre-gl-worker.mjs?worker&url";
+import "maplibre-gl/dist/maplibre-gl.css";
 import type { City, CityResult, Station } from "../api/types";
+
+setWorkerUrl(maplibreWorkerUrl);
 
 type MapDisplayMode = "city" | "station";
 type LabelMode = "auto" | "always" | "hidden";
@@ -204,14 +210,18 @@ onMounted(() => {
   });
   map.getContainer().style.background = "#e9ece8";
 
-  L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
-    minZoom: 3,
-    maxZoom: 18,
-    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
-  })
-    .on("load", () => { tileState.value = "ready"; })
-    .on("tileerror", () => { if (tileState.value !== "ready") tileState.value = "error"; })
-    .addTo(map);
+  const basemap = maplibreGL({
+    style: "https://tiles.openfreemap.org/styles/positron",
+    attributionControl: false,
+  }).addTo(map);
+  const vectorMap = basemap.getMaplibreMap();
+  vectorMap.on("load", () => { tileState.value = "ready"; });
+  vectorMap.on("error", () => { if (tileState.value !== "ready") tileState.value = "error"; });
+  map.attributionControl.addAttribution(
+    '<a href="https://openfreemap.org/">OpenFreeMap</a> · ' +
+    '<a href="https://www.openmaptiles.org/">OpenMapTiles</a> · ' +
+    '数据 <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
+  );
 
   L.polygon(referenceOutline, {
     color: "#9db8b2", weight: 1.5, fillColor: "#f8fbf8", fillOpacity: 0.12, interactive: false,

@@ -1,5 +1,5 @@
 import { test, expect, type Page } from "@playwright/test";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -61,27 +61,44 @@ test("手机布局无横向溢出且可切换地图与列表", async ({ page }) 
 });
 
 test("在线导出生成地图，离线 ZIP 在断网环境可独立打开", async ({ page, context }) => {
-  await calculate(page);
+  const queryResponse = await page.request.post("/api/reachability", {
+    data: {
+      origin_city_id: "beijing",
+      start_at: "2026-11-20T20:00:00+08:00",
+      end_at: "2026-11-21T12:00:00+08:00",
+      train_types: ["G", "D", "K"],
+      transfers_enabled: false,
+    },
+  });
+  expect(queryResponse.ok()).toBe(true);
+  const queryId = (await queryResponse.json()).query_id;
   const folder = await mkdtemp(join(tmpdir(), "tarinmap-export-test-"));
   const errors: string[] = [];
+  let basemapResponses = 0;
   const exported = await context.newPage();
   exported.on("pageerror", error => errors.push(error.message));
+  exported.on("response", response => {
+    if (response.url().startsWith("https://tiles.openfreemap.org/") && response.ok()) {
+      basemapResponses += 1;
+    }
+  });
   try {
-    const onlineDownload = page.waitForEvent("download");
-    await page.getByRole("button", { name: "导出 HTML", exact: true }).click();
+    const onlineResponse = await page.request.get(`/api/results/${queryId}/export?mode=online`);
+    expect(onlineResponse.ok()).toBe(true);
     const online = join(folder, "online.html");
-    await (await onlineDownload).saveAs(online);
+    await writeFile(online, await onlineResponse.body());
     await exported.goto(pathToFileURL(online).href);
+    await expect(exported.locator(".app-shell")).toBeVisible();
     await expect(exported.locator(".leaflet-container")).toBeVisible();
     await expect(exported.locator(".leaflet-overlay-pane path").first()).toBeVisible();
-    // 在线底图必须真实加载，不能仅凭 Leaflet 容器存在判定成功。
-    await expect.poll(() => exported.locator("img.leaflet-tile").evaluateAll(
-      images => images.filter(image => (image as HTMLImageElement).naturalWidth > 0).length,
-    ), { timeout: 30000 }).toBeGreaterThan(0);
-    const offlineDownload = page.waitForEvent("download");
-    await page.getByRole("button", { name: "离线压缩包", exact: true }).click();
+    await expect(exported.locator("canvas.maplibregl-canvas")).toBeVisible();
+    // 在线矢量底图必须真实返回资源，不能仅凭地图容器存在判定成功。
+    await expect.poll(() => basemapResponses, { timeout: 30000 }).toBeGreaterThan(0);
+    await expect(exported.locator("body")).not.toContainText("Access blocked");
+    const offlineResponse = await page.request.get(`/api/results/${queryId}/export?mode=offline`);
+    expect(offlineResponse.ok()).toBe(true);
     const archive = join(folder, "offline.zip");
-    await (await offlineDownload).saveAs(archive);
+    await writeFile(archive, await offlineResponse.body());
     execFileSync("python", ["-m", "zipfile", "-e", archive, folder]);
     await context.setOffline(true);
     const requests: string[] = [];

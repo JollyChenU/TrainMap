@@ -3,12 +3,17 @@
 from __future__ import annotations
 
 import html
+import base64
 import io
 import json
+import mimetypes
+import re
 import zipfile
+from dataclasses import asdict
 from pathlib import Path
+from collections.abc import Sequence
 
-from .models import ReachabilityResponse
+from .models import ReachabilityResponse, Station
 
 
 VIEWER_CSS = """
@@ -175,20 +180,109 @@ def _render_city_cards(payload: dict) -> str:
     return "".join(cards) or "<p>当前条件下没有可达地点。</p>"
 
 
-def build_html(result: ReachabilityResponse, offline: bool) -> bytes:
+def _asset_data_url(path: Path) -> str:
+    """把 Vite 生成的辅助资源转成单文件可用的 data URL。"""
+
+    mime_type = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
+    if path.suffix in {".js", ".mjs"}:
+        mime_type = "text/javascript"
+    encoded = base64.b64encode(path.read_bytes()).decode("ascii")
+    return f"data:{mime_type};base64,{encoded}"
+
+
+def _inline_frontend_assets(source: str, assets_dir: Path, excluded: set[Path]) -> str:
+    """内联 Worker、字体等 bundle 仍通过 URL 引用的资源。"""
+
+    for asset in assets_dir.iterdir():
+        if not asset.is_file() or asset in excluded:
+            continue
+        source = source.replace(f"/assets/{asset.name}", _asset_data_url(asset))
+    return source
+
+
+def _build_online_app_html(
+    result: ReachabilityResponse,
+    origin_stations: Sequence[Station],
+) -> bytes:
+    """将正式 Vue 构建及固化结果封装成无需后端的单 HTML。"""
+
+    frontend_dist = Path(__file__).resolve().parents[2] / "frontend" / "dist"
+    index_path = frontend_dist / "index.html"
+    assets_dir = frontend_dist / "assets"
+    if not index_path.exists() or not assets_dir.exists():
+        raise RuntimeError("前端尚未构建，无法生成同版式 HTML；请先执行 npm run build")
+
+    document = index_path.read_text(encoding="utf-8")
+    css_paths = [
+        frontend_dist / match
+        for match in re.findall(r'<link[^>]+href="/([^\"]+\.css)"[^>]*>', document)
+    ]
+    js_paths = [
+        frontend_dist / match
+        for match in re.findall(r'<script[^>]+src="/([^\"]+\.js)"[^>]*></script>', document)
+    ]
+    if not css_paths or not js_paths:
+        raise RuntimeError("无法识别前端构建产物，请重新执行 npm run build")
+
+    excluded = {path.resolve() for path in [*css_paths, *js_paths]}
+    for css_path in css_paths:
+        css = _inline_frontend_assets(
+            css_path.read_text(encoding="utf-8"), assets_dir, excluded,
+        )
+        document = re.sub(
+            rf'<link[^>]+href="/{re.escape(css_path.relative_to(frontend_dist).as_posix())}"[^>]*>',
+            lambda _match, content=css: f"<style>{content}</style>",
+            document,
+            count=1,
+        )
+
+    bootstrap = {
+        "result": result.model_dump(mode="json"),
+        "origin_stations": [asdict(station) for station in origin_stations],
+    }
+    serialized = (
+        json.dumps(bootstrap, ensure_ascii=False)
+        .replace("<", "\\u003c")
+        .replace("\u2028", "\\u2028")
+        .replace("\u2029", "\\u2029")
+    )
+    bootstrap_tag = f"<script>window.__TARINMAP_EXPORT_DATA__={serialized};</script>"
+    document = document.replace("</head>", f"{bootstrap_tag}</head>", 1)
+
+    for js_path in js_paths:
+        javascript = _inline_frontend_assets(
+            js_path.read_text(encoding="utf-8"), assets_dir, excluded,
+        ).replace("</script", "<\\/script")
+        document = re.sub(
+            rf'<script[^>]+src="/{re.escape(js_path.relative_to(frontend_dist).as_posix())}"[^>]*></script>',
+            lambda _match, content=javascript: f'<script type="module">{content}</script>',
+            document,
+            count=1,
+        )
+
+    document = document.replace(
+        "<title>铁路活动范围地图</title>",
+        f"<title>{html.escape(result.origin_city_name)}铁路可达范围</title>",
+    )
+    return document.encode("utf-8")
+
+
+def build_html(
+    result: ReachabilityResponse,
+    offline: bool,
+    origin_stations: Sequence[Station] = (),
+) -> bytes:
     """生成结果固化的单页查看器。"""
+
+    if not offline:
+        return _build_online_app_html(result, origin_stations)
 
     payload = _viewer_payload(result)
     serialized = json.dumps(payload, ensure_ascii=False).replace("<", "\\u003c")
     mode_name = "完全离线导出" if offline else "在线分享导出"
-    # 在线查看器内嵌 Leaflet，仅底图瓦片联网；离线查看器使用本地真实地理轮廓。
     vendor_css, vendor_js = "", ""
-    if not offline:
-        vendor = Path(__file__).resolve().parents[2] / "frontend" / "node_modules" / "leaflet" / "dist"
-        vendor_css = (vendor / "leaflet.css").read_text(encoding="utf-8")
-        vendor_js = (vendor / "leaflet.js").read_text(encoding="utf-8")
-    land = Path(__file__).with_name("land.geojson").read_text(encoding="utf-8") if offline else "{}"
-    script = VIEWER_JS if offline else ONLINE_JS
+    land = Path(__file__).with_name("land.geojson").read_text(encoding="utf-8")
+    script = VIEWER_JS
     document = f"""<!doctype html>
 <html lang="zh-CN">
 <head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">

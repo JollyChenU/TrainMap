@@ -262,7 +262,11 @@ def export_result(query_id: str, mode: str = Query(pattern="^(online|offline)$")
 
     safe_name = f"{result.origin_city_name}_铁路可达范围"
     if mode == "online":
-        content = build_html(result, offline=False)
+        content = build_html(
+            result,
+            offline=False,
+            origin_stations=repository.list_stations(result.origin_city_id),
+        )
         encoded_name = quote(f"{safe_name}.html")
         return Response(
             content=content,

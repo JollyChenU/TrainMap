@@ -10,11 +10,15 @@ import type {
   Station,
   LegResult,
   Verification,
+  ExportBootstrap,
 } from "./api/types";
 import ReachabilityMap from "./components/ReachabilityMap.vue";
 
 type TimeMode = "concrete" | "weekly";
 type MobileView = "map" | "list";
+
+const exportBootstrap: ExportBootstrap | null = window.__TARINMAP_EXPORT_DATA__ ?? null;
+const exportMode = Boolean(exportBootstrap);
 
 const cities = ref<City[]>([]);
 const stations = ref<Station[]>([]);
@@ -384,6 +388,32 @@ async function restoreQuery(): Promise<void> {
 
 onMounted(async () => {
   initializeConcreteWindow();
+  if (exportBootstrap) {
+    const saved = exportBootstrap.result;
+    status.value = saved.data_status;
+    result.value = saved;
+    stations.value = exportBootstrap.origin_stations;
+    cities.value = [{
+      city_id: saved.origin_city_id,
+      name: saved.origin_city_name,
+      longitude: saved.origin_longitude,
+      latitude: saved.origin_latitude,
+      station_count: exportBootstrap.origin_stations.length,
+    }];
+    originCityId.value = saved.origin_city_id;
+    selectedOriginStationIds.value = saved.origin_station_ids.length
+      ? [...saved.origin_station_ids]
+      : exportBootstrap.origin_stations.map(station => station.station_id);
+    timeMode.value = "concrete";
+    concreteStart.value = saved.request.start_at.slice(0, 16);
+    concreteEnd.value = saved.request.end_at.slice(0, 16);
+    selectedTrainTypes.value = [...saved.request.train_types];
+    transfersEnabled.value = saved.request.transfers_enabled;
+    maxTransfers.value = saved.request.max_transfers;
+    minTransferMinutes.value = saved.request.min_transfer_minutes;
+    selectedCityId.value = saved.cities[0]?.city_id ?? null;
+    return;
+  }
   try {
     [cities.value, status.value] = await Promise.all([
       api.cities(),
@@ -404,6 +434,7 @@ onMounted(async () => {
 watch([timeMode, concreteStart, concreteEnd, weeklyStartDay, weeklyStartTime,
   weeklyEndDay, weeklyEndTime, transfersEnabled, maxTransfers, minTransferMinutes,
   selectedTrainTypes, selectedOriginStationIds], () => {
+    if (exportMode) return;
     result.value = null;
     selectedCityId.value = null;
     selectedStationId.value = null;
@@ -420,7 +451,7 @@ onBeforeUnmount(() => { disposed = true; });
       </div>
       <div class="status-chip" :class="{ demo: status?.source_kind === 'demo' }">
         <span class="status-dot"></span>
-        {{ status?.source_kind === "demo" ? "演示快照" : "铁路快照" }}
+        {{ exportMode ? "本地结果" : status?.source_kind === "demo" ? "演示快照" : "铁路快照" }}
       </div>
     </header>
 
@@ -437,7 +468,7 @@ onBeforeUnmount(() => { disposed = true; });
       </div>
       <div class="data-actions">
         <time>更新于 {{ formatFullDateTime(status.fetched_at) }}</time>
-        <button class="text-button" :disabled="refreshing || loading" @click="refreshData">
+        <button v-if="!exportMode" class="text-button" :disabled="refreshing || loading" @click="refreshData">
           {{ refreshing ? "刷新中…" : "手动刷新" }}
         </button>
       </div>
@@ -473,7 +504,7 @@ onBeforeUnmount(() => { disposed = true; });
           {{ controlsCollapsed ? "›" : "‹" }}
           <span v-if="controlsCollapsed">查询条件</span>
         </button>
-        <fieldset v-show="!controlsCollapsed" class="panel-content" :disabled="refreshing || loading" style="border:0;padding:0;margin:0;min-width:0">
+        <fieldset v-show="!controlsCollapsed" class="panel-content" :disabled="exportMode || refreshing || loading" style="border:0;padding:0;margin:0;min-width:0">
         <section class="panel-section">
           <div class="section-heading">
             <span>01</span>
@@ -608,9 +639,10 @@ onBeforeUnmount(() => { disposed = true; });
             <p v-else class="muted">设置条件后开始计算</p>
           </div>
           <div class="toolbar-actions">
-            <button v-if="lastQueryId" :disabled="loading || refreshing" @click="restoreQuery">恢复上次查询</button>
-            <button :disabled="!result" @click="exportResult('online')">导出 HTML</button>
-            <button :disabled="!result" @click="exportResult('offline')">离线压缩包</button>
+            <span v-if="exportMode" class="muted">已固化的本地结果</span>
+            <button v-if="!exportMode && lastQueryId" :disabled="loading || refreshing" @click="restoreQuery">恢复上次查询</button>
+            <button v-if="!exportMode" :disabled="!result" @click="exportResult('online')">导出 HTML</button>
+            <button v-if="!exportMode" :disabled="!result" @click="exportResult('offline')">离线压缩包</button>
           </div>
         </div>
         <p v-if="result" class="muted">按城市归属聚合，归属待核验车站独立分组。结果使用 {{ result.data_status.version }}，计算于 {{ formatFullDateTime(result.generated_at) }}；{{ formatDateTime(result.request.start_at) }} 至 {{ formatDateTime(result.request.end_at) }}。</p>
@@ -693,7 +725,7 @@ onBeforeUnmount(() => { disposed = true; });
                       <div>
                         <p>{{ leg.from_station_name }} → {{ leg.to_station_name }}</p>
                         <small>{{ formatDateTime(leg.departure_at) }} — {{ formatDateTime(leg.arrival_at) }}</small>
-                        <button v-if="leg.service_date && result.data_status.source_kind === 'external'"
+                        <button v-if="!exportMode && leg.service_date && result.data_status.source_kind === 'external'"
                           class="text-button" :disabled="verifying" @click="verify(leg)">
                           {{ verifying ? "核验中…" : "12306 经停核验" }}
                         </button>
