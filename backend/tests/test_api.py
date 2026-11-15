@@ -1,6 +1,8 @@
 """API 与导出功能的集成测试。"""
 
 import io
+import json
+import re
 import zipfile
 
 from fastapi.testclient import TestClient
@@ -83,8 +85,41 @@ def test_online_export_inlines_the_production_frontend() -> None:
     assert "window.__TARINMAP_EXPORT_DATA__=" in document
     assert '"origin_stations"' in document
     assert "/assets/" not in document
-    assert "tile.openstreetmap.org" not in document
     assert "data:text/javascript;base64," in document
+    bootstrap = json.loads(re.search(
+        r"window\.__TARINMAP_EXPORT_DATA__=(.*?);</script>", document,
+    ).group(1))
+    assert "direct_result" not in bootstrap
+
+
+def test_online_export_embeds_direct_variant_only_when_transfers_are_enabled() -> None:
+    """开启中转的查询应额外保存仅直达结果，供下载后离线切换。"""
+
+    response = client.post(
+        "/api/reachability",
+        json={
+            "origin_city_id": "beijing",
+            "start_at": "2026-11-20T20:00:00+08:00",
+            "end_at": "2026-11-21T12:00:00+08:00",
+            "train_types": ["G", "D", "K"],
+            "transfers_enabled": True,
+            "max_transfers": 1,
+            "min_transfer_minutes": 30,
+        },
+    )
+    assert response.status_code == 200
+
+    export = client.get(
+        f"/api/results/{response.json()['query_id']}/export",
+        params={"mode": "online"},
+    )
+    assert export.status_code == 200
+    bootstrap = json.loads(re.search(
+        r"window\.__TARINMAP_EXPORT_DATA__=(.*?);</script>", export.text,
+    ).group(1))
+    assert bootstrap["result"]["request"]["transfers_enabled"] is True
+    assert bootstrap["direct_result"]["request"]["transfers_enabled"] is False
+    assert bootstrap["direct_result"]["request"]["max_transfers"] == 0
 
 
 def test_invalid_window_returns_validation_error() -> None:

@@ -203,6 +203,7 @@ def _inline_frontend_assets(source: str, assets_dir: Path, excluded: set[Path]) 
 def _build_online_app_html(
     result: ReachabilityResponse,
     origin_stations: Sequence[Station],
+    direct_result: ReachabilityResponse | None,
 ) -> bytes:
     """将正式 Vue 构建及固化结果封装成无需后端的单 HTML。"""
 
@@ -240,6 +241,8 @@ def _build_online_app_html(
         "result": result.model_dump(mode="json"),
         "origin_stations": [asdict(station) for station in origin_stations],
     }
+    if direct_result is not None:
+        bootstrap["direct_result"] = direct_result.model_dump(mode="json")
     serialized = (
         json.dumps(bootstrap, ensure_ascii=False)
         .replace("<", "\\u003c")
@@ -271,11 +274,12 @@ def build_html(
     result: ReachabilityResponse,
     offline: bool,
     origin_stations: Sequence[Station] = (),
+    direct_result: ReachabilityResponse | None = None,
 ) -> bytes:
     """生成结果固化的单页查看器。"""
 
     if not offline:
-        return _build_online_app_html(result, origin_stations)
+        return _build_online_app_html(result, origin_stations, direct_result)
 
     payload = _viewer_payload(result)
     serialized = json.dumps(payload, ensure_ascii=False).replace("<", "\\u003c")

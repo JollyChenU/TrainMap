@@ -565,7 +565,21 @@ input[role="switch"]:checked::after {
 
 .toolbar-actions {
   display: flex;
+  align-items: center;
   gap: 8px;
+}
+
+.export-transfer-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #3c626c;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.export-transfer-toggle span {
+  margin: 0;
 }
 
 .toolbar-actions button {

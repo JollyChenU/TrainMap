@@ -19,6 +19,7 @@ type MobileView = "map" | "list";
 
 const exportBootstrap: ExportBootstrap | null = window.__TARINMAP_EXPORT_DATA__ ?? null;
 const exportMode = Boolean(exportBootstrap);
+const exportTransfersEnabled = ref(Boolean(exportBootstrap?.direct_result));
 
 const cities = ref<City[]>([]);
 const stations = ref<Station[]>([]);
@@ -341,6 +342,25 @@ function exportResult(mode: "online" | "offline"): void {
   window.location.href = `/api/results/${encodeURIComponent(result.value.query_id)}/export?mode=${mode}`;
 }
 
+function showExportVariant(includeTransfers: boolean): void {
+  if (!exportBootstrap?.direct_result) return;
+  const nextResult = includeTransfers
+    ? exportBootstrap.result
+    : exportBootstrap.direct_result;
+  result.value = nextResult;
+  status.value = nextResult.data_status;
+  transfersEnabled.value = includeTransfers;
+  maxTransfers.value = nextResult.request.max_transfers;
+  if (!nextResult.cities.some(city => city.city_id === selectedCityId.value)) {
+    selectedCityId.value = nextResult.cities[0]?.city_id ?? null;
+    selectedStationId.value = null;
+  } else if (selectedStationId.value && !nextResult.cities.some(
+    city => city.stations.some(station => station.station_id === selectedStationId.value),
+  )) {
+    selectedStationId.value = null;
+  }
+}
+
 async function verify(leg: LegResult): Promise<void> {
   if (!result.value || !leg.service_date) return;
   verifying.value = true;
@@ -439,6 +459,7 @@ watch([timeMode, concreteStart, concreteEnd, weeklyStartDay, weeklyStartTime,
     selectedCityId.value = null;
     selectedStationId.value = null;
   }, { deep: true });
+watch(exportTransfersEnabled, value => showExportVariant(value));
 onBeforeUnmount(() => { disposed = true; });
 </script>
 
@@ -639,7 +660,11 @@ onBeforeUnmount(() => { disposed = true; });
             <p v-else class="muted">设置条件后开始计算</p>
           </div>
           <div class="toolbar-actions">
-            <span v-if="exportMode" class="muted">已固化的本地结果</span>
+            <label v-if="exportMode && exportBootstrap?.direct_result" class="export-transfer-toggle">
+              <span>包含中转</span>
+              <input v-model="exportTransfersEnabled" type="checkbox" role="switch" />
+            </label>
+            <span v-else-if="exportMode" class="muted">仅直达结果</span>
             <button v-if="!exportMode && lastQueryId" :disabled="loading || refreshing" @click="restoreQuery">恢复上次查询</button>
             <button v-if="!exportMode" :disabled="!result" @click="exportResult('online')">导出 HTML</button>
             <button v-if="!exportMode" :disabled="!result" @click="exportResult('offline')">离线压缩包</button>

@@ -108,6 +108,7 @@ export interface ReachabilityResponse {
 export interface ExportBootstrap {
   result: ReachabilityResponse;
   origin_stations: Station[];
+  direct_result?: ReachabilityResponse;
 }
 
 declare global {

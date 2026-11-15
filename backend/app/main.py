@@ -262,10 +262,23 @@ def export_result(query_id: str, mode: str = Query(pattern="^(online|offline)$")
 
     safe_name = f"{result.origin_city_name}_铁路可达范围"
     if mode == "online":
+        direct_result = None
+        if result.request.transfers_enabled:
+            with snapshot_lock:
+                current_status = current_data_status()
+                if current_status.fetched_at != result.data_status.fetched_at:
+                    raise HTTPException(409, "铁路快照已更新，请重新计算后再导出双重结果")
+                direct_request = ReachabilityRequest.model_validate({
+                    **result.request.model_dump(mode="json"),
+                    "transfers_enabled": False,
+                    "max_transfers": 0,
+                })
+                direct_result = _calculate(direct_request)
         content = build_html(
             result,
             offline=False,
             origin_stations=repository.list_stations(result.origin_city_id),
+            direct_result=direct_result,
         )
         encoded_name = quote(f"{safe_name}.html")
         return Response(
