@@ -29,6 +29,7 @@ const props = defineProps<{
   cities: CityResult[];
   selectedCityId: string | null;
   selectedStationId: string | null;
+  useExportBasemap?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -210,18 +211,29 @@ onMounted(() => {
   });
   map.getContainer().style.background = "#e9ece8";
 
-  const basemap = maplibreGL({
-    style: "https://tiles.openfreemap.org/styles/positron",
-    attributionControl: false,
-  }).addTo(map);
-  const vectorMap = basemap.getMaplibreMap();
-  vectorMap.on("load", () => { tileState.value = "ready"; });
-  vectorMap.on("error", () => { if (tileState.value !== "ready") tileState.value = "error"; });
-  map.attributionControl.addAttribution(
-    '<a href="https://openfreemap.org/">OpenFreeMap</a> · ' +
-    '<a href="https://www.openmaptiles.org/">OpenMapTiles</a> · ' +
-    '数据 <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
-  );
+  if (props.useExportBasemap) {
+    const basemap = maplibreGL({
+      style: "https://tiles.openfreemap.org/styles/positron",
+      attributionControl: false,
+    }).addTo(map);
+    const vectorMap = basemap.getMaplibreMap();
+    vectorMap.on("load", () => { tileState.value = "ready"; });
+    vectorMap.on("error", () => { if (tileState.value !== "ready") tileState.value = "error"; });
+    map.attributionControl.addAttribution(
+      '<a href="https://openfreemap.org/">OpenFreeMap</a> · ' +
+      '<a href="https://www.openmaptiles.org/">OpenMapTiles</a> · ' +
+      '数据 <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
+    );
+  } else {
+    L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
+      minZoom: 3,
+      maxZoom: 18,
+      attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+    })
+      .on("load", () => { tileState.value = "ready"; })
+      .on("tileerror", () => { if (tileState.value !== "ready") tileState.value = "error"; })
+      .addTo(map);
+  }
 
   L.polygon(referenceOutline, {
     color: "#9db8b2", weight: 1.5, fillColor: "#f8fbf8", fillOpacity: 0.12, interactive: false,

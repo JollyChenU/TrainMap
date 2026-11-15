@@ -666,6 +666,7 @@ onBeforeUnmount(() => { disposed = true; });
               :cities="result?.cities ?? []"
               :selected-city-id="selectedCityId"
               :selected-station-id="selectedStationId"
+              :use-export-basemap="exportMode"
               @select="selectLocation"
             />
             <div v-if="!result" class="empty-map">

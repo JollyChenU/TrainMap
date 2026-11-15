@@ -55,7 +55,7 @@
 
 - **HTML**：直接内嵌正式 Vue 前端、当前查询条件和结果，版式及地图交互与主页面一致；无需后端，联网后由 OpenFreeMap 加载并更新底图。刷新数据、重新计算、再次导出和 12306 核验在固化结果中不可用。
 - **离线 ZIP**：解压后直接打开 `index.html`，无后端和网络依赖；含 `result.json`、清单及许可说明。底图为 Natural Earth 公共领域简化地理轮廓，支持缩放拖动，不含街道，也不表示真实铁路线路。
-- 主页面与 HTML 导出统一使用 OpenFreeMap 在线矢量底图（OpenMapTiles / OpenStreetMap 数据）；离线 ZIP 仍使用本地简化底图。
+- 主页面继续使用原有 OpenStreetMap 在线底图；HTML 导出单独使用 OpenFreeMap 在线矢量底图，离线 ZIP 仍使用本地简化底图。
 
 ## 开发
 
