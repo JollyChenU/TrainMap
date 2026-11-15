@@ -526,7 +526,6 @@ onBeforeUnmount(() => { disposed = true; });
               :aria-pressed="selectedOriginStationIds.includes(station.station_id)"
               @click="toggleOriginStation(station.station_id)"
             >
-              <span class="station-check" aria-hidden="true">{{ selectedOriginStationIds.includes(station.station_id) ? '✓' : '' }}</span>
               {{ station.name }}
             </button>
           </div>
