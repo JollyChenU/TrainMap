@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["backend.app*"]
+
+[tool.setuptools.package-data]
+"backend.app" = ["land.geojson"]
+
+[project]
+name = "tarinmap"
+version = "0.1.0"
+description = "基于铁路时刻表快照计算时间范围内可达城市与车站"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.116,<1",
+    "uvicorn>=0.35,<1",
+    "pydantic>=2.9,<3",
+    "tzdata>=2025.2",
+]
+
+[project.optional-dependencies]
+test = [
+    "httpx>=0.28,<1",
+    "pytest>=8,<9",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["backend/tests"]
+pythonpath = ["."]
+addopts = "-q"
