@@ -146,3 +146,19 @@ def test_origin_city_is_not_counted_as_destination(
     assert result.origin_city_name == "北京"
     assert "北京" not in {city.city_name for city in result.cities}
     assert len(result.origin_station_ids) == 3
+
+
+def test_selected_origin_stations_limit_departures(
+    repository: RailwayRepository,
+) -> None:
+    """只选择北京西站时，不得使用北京站或北京南站的列车。"""
+
+    result = run(
+        repository,
+        make_request(origin_station_ids=["beijing_west"]),
+    )
+    city_names = {city.city_name for city in result.cities}
+
+    assert result.origin_station_ids == ["beijing_west"]
+    assert "广州" in city_names
+    assert "济南" not in city_names

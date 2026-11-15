@@ -208,6 +208,12 @@ def _calculate(request: ReachabilityRequest) -> ReachabilityResponse:
     origin = repository.get_city(request.origin_city_id)
     if origin is None:
         raise HTTPException(status_code=404, detail="始发城市不存在")
+    available_origin_ids = {
+        station.station_id for station in repository.list_stations(request.origin_city_id)
+    }
+    requested_origin_ids = set(request.origin_station_ids)
+    if requested_origin_ids and not requested_origin_ids <= available_origin_ids:
+        raise HTTPException(422, "始发站不属于所选城市或不办理客运业务")
     query_id = query_identifier(request)
     with result_lock:
         cached = result_store.get(query_id)

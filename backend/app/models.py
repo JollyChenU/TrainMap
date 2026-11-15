@@ -58,6 +58,7 @@ class ReachabilityRequest(BaseModel):
     """一次可达范围计算请求。"""
 
     origin_city_id: str
+    origin_station_ids: list[str] = Field(default_factory=list)
     start_at: datetime
     end_at: datetime
     train_types: list[str] = Field(min_length=1)
@@ -76,6 +77,7 @@ class ReachabilityRequest(BaseModel):
         if not set(self.train_types) <= allowed:
             raise ValueError("不支持的列车类型")
         self.train_types = sorted(set(self.train_types))
+        self.origin_station_ids = sorted(set(self.origin_station_ids))
         if self.end_at <= self.start_at:
             raise ValueError("最晚到达时间必须晚于最早出发时间")
         if self.end_at - self.start_at > timedelta(days=14):

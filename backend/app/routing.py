@@ -128,8 +128,11 @@ def calculate_reachability(
     city_by_id = {city.city_id: city for city in cities}
     station_by_id = {station.station_id: station for station in stations}
     origin_city = city_by_id[request.origin_city_id]
+    requested_origin_ids = set(request.origin_station_ids)
     origin_stations = [
-        station for station in stations if station.city_id == request.origin_city_id
+        station for station in stations
+        if station.city_id == request.origin_city_id
+        and (not requested_origin_ids or station.station_id in requested_origin_ids)
     ]
     origin_station_ids = {station.station_id for station in origin_stations}
     maximum_boardings = request.max_transfers + 1 if request.transfers_enabled else 1

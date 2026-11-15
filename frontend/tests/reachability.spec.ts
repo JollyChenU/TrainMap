@@ -12,7 +12,8 @@ async function calculate(page: Page): Promise<void> {
   expect(status.source_kind).toBe("external");
   await page.goto("/");
   await expect(page.getByRole("button", { name: "每周时段", exact: true })).toHaveClass("active");
-  await expect(page.locator(".station-tags span").first()).toBeVisible();
+  await expect(page.locator(".station-tags button").first()).toBeVisible();
+  await expect(page.getByRole("button", { name: "自动", exact: true })).toHaveClass(/active/);
   await page.getByRole("button", { name: "具体日期", exact: true }).click();
   // 固定在当前快照有效期内，避免测试随系统日期过期。
   const day = status.valid_from;
@@ -112,7 +113,7 @@ test("刷新失败显示原因且保留可查询的旧快照", async ({ page }) 
     json: { state: "failed", message: "测试网络中断，旧快照已保留" },
   }));
   await page.goto("/");
-  await expect(page.locator(".station-tags span").first()).toBeVisible();
+  await expect(page.locator(".station-tags button").first()).toBeVisible();
   await page.getByRole("button", { name: "手动刷新", exact: true }).click();
   await expect(page.getByRole("alert")).toContainText("旧快照已保留");
   await expect(page.getByRole("button", { name: "计算铁路可达范围", exact: true })).toBeEnabled();

@@ -35,6 +35,7 @@ const verification = ref<Verification | null>(null);
 const lastQueryId = ref<string | null>(null);
 const originSearch = ref("");
 const originSearchFocused = ref(false);
+const selectedOriginStationIds = ref<string[]>([]);
 let disposed = false;
 const DEFAULT_ORIGIN_CITY_NAME = "杭州";
 const originCandidates = computed(() => {
@@ -80,6 +81,10 @@ const weekdayOptions = [
 const originCity = computed(
   () => cities.value.find((city) => city.city_id === originCityId.value) ?? null,
 );
+const selectedOriginStations = computed(() => {
+  const selected = new Set(selectedOriginStationIds.value);
+  return stations.value.filter(station => selected.has(station.station_id));
+});
 const selectedCity = computed(
   () =>
     result.value?.cities.find((city) => city.city_id === selectedCityId.value) ??
@@ -202,6 +207,17 @@ function formatFullDateTime(value: string): string {
 
 async function loadOriginStations(): Promise<void> {
   stations.value = await api.stations(originCityId.value);
+  selectedOriginStationIds.value = stations.value.map(station => station.station_id);
+}
+
+function toggleOriginStation(stationId: string): void {
+  selectedOriginStationIds.value = selectedOriginStationIds.value.includes(stationId)
+    ? selectedOriginStationIds.value.filter(id => id !== stationId)
+    : [...selectedOriginStationIds.value, stationId];
+}
+
+function selectAllOriginStations(): void {
+  selectedOriginStationIds.value = stations.value.map(station => station.station_id);
 }
 
 async function handleOriginChange(): Promise<void> {
@@ -270,6 +286,10 @@ async function refreshData(): Promise<void> {
 
 async function calculate(): Promise<void> {
   errorMessage.value = "";
+  if (!selectedOriginStationIds.value.length) {
+    errorMessage.value = "请至少选择一个始发站";
+    return;
+  }
   if (!selectedTrainTypes.value.length) {
     errorMessage.value = "请至少选择一种列车类型";
     return;
@@ -282,6 +302,7 @@ async function calculate(): Promise<void> {
   const window = normalizeTimeWindow();
   const payload: QueryPayload = {
     origin_city_id: originCityId.value,
+    origin_station_ids: [...selectedOriginStationIds.value],
     start_at: window.start,
     end_at: window.end,
     train_types: selectedTrainTypes.value,
@@ -341,6 +362,9 @@ async function restoreQuery(): Promise<void> {
     }
     originCityId.value = saved.origin_city_id;
     await loadOriginStations();
+    selectedOriginStationIds.value = saved.request.origin_station_ids?.length
+      ? saved.request.origin_station_ids.filter(id => stations.value.some(station => station.station_id === id))
+      : stations.value.map(station => station.station_id);
     timeMode.value = "concrete";
     concreteStart.value = saved.request.start_at.slice(0, 16);
     concreteEnd.value = saved.request.end_at.slice(0, 16);
@@ -384,7 +408,7 @@ onMounted(async () => {
 // 条件变更后移除旧结果，避免将旧范围误当成当前条件计算结果。
 watch([timeMode, concreteStart, concreteEnd, weeklyStartDay, weeklyStartTime,
   weeklyEndDay, weeklyEndTime, transfersEnabled, maxTransfers, minTransferMinutes,
-  selectedTrainTypes], () => {
+  selectedTrainTypes, selectedOriginStationIds], () => {
     result.value = null;
     selectedCityId.value = null;
     selectedStationId.value = null;
@@ -396,7 +420,7 @@ onBeforeUnmount(() => { disposed = true; });
   <div class="app-shell">
     <header class="topbar">
       <div>
-        <p class="eyebrow">RAIL REACHABILITY</p>
+        <p class="eyebrow">按时刻计算铁路可达范围</p>
         <h1>铁路活动范围地图</h1>
       </div>
       <div class="status-chip" :class="{ demo: status?.source_kind === 'demo' }">
@@ -488,12 +512,25 @@ onBeforeUnmount(() => { disposed = true; });
               <p v-if="!originCandidates.length">没有匹配的城市</p>
             </div>
           </div>
-          <div class="station-tags" style="max-height:120px;overflow:auto">
-            <span v-for="station in stations" :key="station.station_id">
-              {{ station.name }}
-            </span>
+          <div class="station-filter-heading">
+            <span>始发站</span>
+            <span>{{ selectedOriginStationIds.length }}/{{ stations.length }} 已选</span>
+            <button type="button" @click="selectAllOriginStations">全选</button>
           </div>
-          <small>仅按快照中可办理上下客业务的客运站计算；地图城市点取该城市的代表车站位置。</small>
+          <div class="station-tags" role="group" aria-label="筛选始发站">
+            <button
+              v-for="station in stations"
+              :key="station.station_id"
+              type="button"
+              :class="{ selected: selectedOriginStationIds.includes(station.station_id) }"
+              :aria-pressed="selectedOriginStationIds.includes(station.station_id)"
+              @click="toggleOriginStation(station.station_id)"
+            >
+              <span class="station-check" aria-hidden="true">{{ selectedOriginStationIds.includes(station.station_id) ? '✓' : '' }}</span>
+              {{ station.name }}
+            </button>
+          </div>
+          <small>仅从已选客运站出发；地图城市点取该城市的代表车站位置</small>
         </section>
 
         <section class="panel-section">
@@ -599,7 +636,7 @@ onBeforeUnmount(() => { disposed = true; });
           <div class="map-column">
             <ReachabilityMap
               :origin="originCity"
-              :origin-stations="stations"
+              :origin-stations="selectedOriginStations"
               :cities="result?.cities ?? []"
               :selected-city-id="selectedCityId"
               :selected-station-id="selectedStationId"

@@ -73,3 +73,21 @@ def test_invalid_window_returns_validation_error() -> None:
     )
 
     assert response.status_code == 422
+
+
+def test_origin_station_must_belong_to_selected_city() -> None:
+    """始发站筛选不能引用其他城市的车站。"""
+
+    response = client.post(
+        "/api/reachability",
+        json={
+            "origin_city_id": "beijing",
+            "origin_station_ids": ["hangzhou_east"],
+            "start_at": "2026-11-20T20:00:00+08:00",
+            "end_at": "2026-11-21T12:00:00+08:00",
+            "train_types": ["G"],
+        },
+    )
+
+    assert response.status_code == 422
+    assert "始发站" in response.json()["detail"]

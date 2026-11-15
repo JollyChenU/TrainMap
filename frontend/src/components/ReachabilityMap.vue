@@ -4,6 +4,7 @@ import L from "leaflet";
 import type { City, CityResult, Station } from "../api/types";
 
 type MapDisplayMode = "city" | "station";
+type LabelMode = "auto" | "always" | "hidden";
 type PointLike = Pick<Station, "latitude" | "longitude">;
 
 interface MarkerDescriptor {
@@ -28,14 +29,14 @@ const emit = defineEmits<{
   select: [cityId: string, stationId?: string];
 }>();
 
-const LABEL_DENSITY_THRESHOLD = 28;
 let map: L.Map | null = null;
 let resultLayer: L.LayerGroup | null = null;
 let resizeObserver: ResizeObserver | null = null;
 const mapElement = ref<HTMLElement | null>(null);
 const fullscreen = ref(false);
 const displayMode = ref<MapDisplayMode>("station");
-const showNames = ref(true);
+const labelMode = ref<LabelMode>("auto");
+const labelDensityThreshold = ref(30);
 const tileState = ref<"loading" | "ready" | "error">("loading");
 
 const referenceOutline: L.LatLngExpression[] = [
@@ -130,7 +131,8 @@ function drawResults(fit = true): void {
   const points = descriptors.map(item => item.point);
   const bounds = map.getBounds();
   const visibleCount = descriptors.filter(item => bounds.contains(L.latLng(item.point))).length;
-  const permanentNames = showNames.value && visibleCount <= LABEL_DENSITY_THRESHOLD;
+  const permanentNames = labelMode.value === "always"
+    || (labelMode.value === "auto" && visibleCount <= labelDensityThreshold.value);
 
   for (const item of descriptors) {
     const isOrigin = item.kind === "origin";
@@ -193,10 +195,14 @@ onMounted(() => {
     zoom: props.origin ? 5 : 4,
     minZoom: 3,
     maxZoom: 18,
+    zoomDelta: 0.5,
+    zoomSnap: 0.5,
+    wheelPxPerZoomLevel: 120,
+    wheelDebounceTime: 80,
     zoomControl: true,
     attributionControl: true,
   });
-  map.getContainer().style.background = "linear-gradient(145deg, #dcecef 0%, #e9f1e6 100%)";
+  map.getContainer().style.background = "#e9ece8";
 
   L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
     minZoom: 3,
@@ -228,7 +234,8 @@ watch(
 );
 watch(() => [props.selectedCityId, props.selectedStationId], () => drawResults(false));
 watch(displayMode, () => drawResults(false));
-watch(showNames, () => drawResults(false));
+watch(labelMode, () => drawResults(false));
+watch(labelDensityThreshold, () => drawResults(false));
 
 onBeforeUnmount(() => {
   document.removeEventListener("keydown", handleKeydown);
@@ -250,14 +257,27 @@ onBeforeUnmount(() => {
       :aria-label="fullscreen ? '退出地图全屏' : '打开地图全屏'"
       @click="toggleFullscreen"
     >{{ fullscreen ? "↙" : "⛶" }}</button>
-    <div class="map-display-controls" aria-label="地图标记设置">
-      <div class="mode-switch">
-        <button :class="{ active: displayMode === 'city' }" @click="displayMode = 'city'">城市</button>
-        <button :class="{ active: displayMode === 'station' }" @click="displayMode = 'station'">车站</button>
+    <div class="map-display-controls" aria-label="地图显示设置">
+      <div class="map-control-row">
+        <span>标记</span>
+        <div class="mode-switch compact-switch">
+          <button :class="{ active: displayMode === 'city' }" @click="displayMode = 'city'">城市</button>
+          <button :class="{ active: displayMode === 'station' }" @click="displayMode = 'station'">车站</button>
+        </div>
       </div>
-      <button class="name-toggle" :class="{ active: showNames }" :aria-pressed="showNames" @click="showNames = !showNames">
-        {{ showNames ? "隐藏名称" : "显示名称" }}
-      </button>
+      <div class="map-control-row label-row">
+        <span>名称</span>
+        <div class="mode-switch label-switch" role="group" aria-label="名称显示方式">
+          <button :class="{ active: labelMode === 'auto' }" @click="labelMode = 'auto'">自动</button>
+          <button :class="{ active: labelMode === 'always' }" @click="labelMode = 'always'">始终</button>
+          <button :class="{ active: labelMode === 'hidden' }" @click="labelMode = 'hidden'">隐藏</button>
+        </div>
+      </div>
+      <label v-if="labelMode === 'auto'" class="density-control">
+        <span>显示阈值</span>
+        <input v-model.number="labelDensityThreshold" type="range" min="5" max="80" step="5" />
+        <output>{{ labelDensityThreshold }}</output>
+      </label>
     </div>
     <div class="map-legend" aria-label="地图图例">
       <span><i class="origin-dot"></i>始发</span>
@@ -266,33 +286,39 @@ onBeforeUnmount(() => {
     </div>
     <p v-if="tileState === 'loading'" class="tile-status">正在加载地图底图…</p>
     <p v-else-if="tileState === 'error'" class="tile-status error">在线底图加载失败，当前显示简化地理轮廓</p>
-    <p class="map-caption">名称仅在当前视野标点不超过 {{ LABEL_DENSITY_THRESHOLD }} 个时显示</p>
+    <p class="map-caption">滚轮以半级平滑缩放</p>
   </div>
 </template>
 
 <style scoped>
 .map-frame { position: relative; min-height: 100%; }
 #reachability-map { min-height: 600px; height: calc(100vh - 170px); border-radius: 22px; overflow: hidden; }
-.map-frame.is-fullscreen { position: fixed; z-index: 2000; inset: 0; width: 100vw; height: 100vh; padding: 0; background: #dcecef; }
+.map-frame.is-fullscreen { position: fixed; z-index: 2000; inset: 0; width: 100vw; height: 100vh; padding: 0; background: #e9ece8; }
 .map-frame.is-fullscreen #reachability-map { width: 100%; height: 100%; min-height: 100%; border-radius: 0; }
-.fullscreen-button { position: absolute; z-index: 520; top: 82px; left: 10px; display: grid; width: 34px; height: 34px; border: 0; border-radius: 5px; place-items: center; background: white; box-shadow: 0 1px 5px rgb(0 0 0 / 28%); color: #315761; font-size: 19px; font-weight: 800; cursor: pointer; }
+.fullscreen-button { position: absolute; z-index: 520; top: 84px; left: 12px; display: grid; width: 36px; height: 36px; border: 1px solid rgb(31 27 22 / 10%); border-radius: 8px; place-items: center; background: #fdfbf7; box-shadow: 0 1px 2px rgb(31 27 22 / 10%); color: #5e554a; font-size: 18px; font-weight: 500; cursor: pointer; }
 .fullscreen-button:hover { background: #f4f8f8; }
-.map-display-controls { position: absolute; z-index: 520; top: 12px; left: 50px; display: flex; gap: 7px; padding: 5px; border: 1px solid rgb(255 255 255 / 70%); border-radius: 10px; background: rgb(255 255 255 / 94%); box-shadow: 0 5px 18px rgb(24 58 68 / 15%); }
-.mode-switch { display: flex; padding: 2px; border-radius: 7px; background: #edf3f3; }
-.map-display-controls button { padding: 6px 9px; border: 0; border-radius: 6px; background: transparent; color: #587078; font-size: 11px; font-weight: 800; cursor: pointer; }
-.map-display-controls button.active { background: white; color: #176575; box-shadow: 0 1px 5px rgb(35 78 88 / 12%); }
-.name-toggle { border-left: 1px solid #dce6e6 !important; border-radius: 0 6px 6px 0 !important; }
+.map-display-controls { position: absolute; z-index: 520; top: 12px; left: 52px; display: grid; gap: 6px; min-width: 260px; padding: 8px; border: 1px solid rgb(25 37 35 / 10%); border-radius: 12px; background: rgb(253 251 247 / 96%); box-shadow: 0 8px 24px rgb(31 27 22 / 8%); color: #5e554a; }
+.map-control-row { display: grid; grid-template-columns: 36px 1fr; gap: 8px; align-items: center; }
+.map-control-row > span, .density-control > span { font-size: 11px; color: #7b7266; }
+.mode-switch { display: grid; padding: 2px; border-radius: 8px; background: #efe9df; }
+.compact-switch { grid-template-columns: 1fr 1fr; }
+.label-switch { grid-template-columns: repeat(3, 1fr); }
+.map-display-controls button { min-height: 28px; padding: 4px 8px; border: 0; border-radius: 6px; background: transparent; color: #5e554a; font-size: 11px; font-weight: 500; cursor: pointer; transition: background-color 150ms cubic-bezier(0.22, 1, 0.36, 1), color 150ms cubic-bezier(0.22, 1, 0.36, 1); }
+.map-display-controls button.active { background: #fdfbf7; color: #1f1b16; box-shadow: 0 1px 2px rgb(31 27 22 / 8%); }
+.density-control { display: grid; grid-template-columns: 56px 1fr 24px; gap: 8px; align-items: center; padding-top: 2px; }
+.density-control input { width: 100%; accent-color: #176a70; }
+.density-control output { color: #1f1b16; font: 500 11px/1 ui-monospace, SFMono-Regular, Consolas, monospace; text-align: right; }
 .map-legend { position: absolute; z-index: 500; left: 14px; bottom: 40px; display: flex; gap: 12px; padding: 9px 12px; border: 1px solid rgb(255 255 255 / 60%); border-radius: 999px; background: rgb(255 255 255 / 92%); box-shadow: 0 6px 20px rgb(16 63 79 / 14%); color: #24434c; font-size: 12px; backdrop-filter: blur(8px); }
 .map-legend i { display: inline-block; width: 9px; height: 9px; margin-right: 5px; border-radius: 50%; }
 .origin-dot { background: #a63c4a; }
 .direct-dot { background: #117a73; }
 .transfer-dot { background: #e67e22; }
-.map-caption { position: absolute; z-index: 500; right: 12px; top: 12px; margin: 0; padding: 5px 8px; border-radius: 7px; background: rgb(255 255 255 / 88%); color: #526b72; font-size: 11px; }
+.map-caption { position: absolute; z-index: 500; right: 12px; top: 12px; margin: 0; padding: 5px 8px; border: 1px solid rgb(25 37 35 / 8%); border-radius: 6px; background: rgb(253 251 247 / 92%); color: #6b665d; font-size: 11px; }
 .tile-status { position: absolute; z-index: 510; top: 50%; left: 50%; margin: 0; padding: 9px 12px; border-radius: 9px; background: rgb(255 255 255 / 92%); box-shadow: 0 5px 18px rgb(24 58 68 / 15%); color: #3f626b; font-size: 12px; transform: translate(-50%, -50%); }
 .tile-status.error { color: #8b541e; }
 @media (max-width: 780px) {
   #reachability-map { height: 48vh; min-height: 370px; border-radius: 16px; }
-  .map-caption { top: 56px; max-width: 58%; text-align: right; }
-  .map-display-controls { left: 48px; }
+  .map-caption { display: none; }
+  .map-display-controls { right: 8px; left: 48px; min-width: 0; }
 }
 </style>

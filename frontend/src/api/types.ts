@@ -38,6 +38,7 @@ export interface RefreshJob {
 
 export interface QueryPayload {
   origin_city_id: string;
+  origin_station_ids: string[];
   start_at: string;
   end_at: string;
   train_types: string[];
