@@ -230,7 +230,6 @@ async function handleOriginChange(): Promise<void> {
   try {
     // 加载期间禁用条件，避免快速切换城市时异步车站列表相互覆盖。
     await loadOriginStations();
-    await refreshData();
   } catch (error) {
     errorMessage.value = error instanceof Error ? error.message : "切换城市失败";
   } finally {
@@ -393,13 +392,9 @@ onMounted(async () => {
     originCityId.value = cities.value.find(city => city.name === DEFAULT_ORIGIN_CITY_NAME)?.city_id
       ?? cities.value[0]?.city_id ?? "";
     await loadOriginStations();
-    if (status.value?.source_kind === "demo") {
-      await refreshData();
-    } else {
-      try {
-        lastQueryId.value = localStorage.getItem("tarinmap-last-query");
-      } catch { /* 已清理的历史结果不影响新查询。 */ }
-    }
+    try {
+      lastQueryId.value = localStorage.getItem("tarinmap-last-query");
+    } catch { /* 已清理的历史结果不影响新查询。 */ }
   } catch (error) {
     errorMessage.value = error instanceof Error ? error.message : "初始化失败";
   }

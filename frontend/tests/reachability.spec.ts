@@ -107,6 +107,22 @@ test("在线导出生成地图，离线 ZIP 在断网环境可独立打开", asy
   }
 });
 
+test("初始化和切换城市不会自动刷新铁路数据", async ({ page }) => {
+  let refreshRequests = 0;
+  page.on("request", request => {
+    if (request.method() === "POST" && request.url().endsWith("/api/data-status/refresh")) {
+      refreshRequests += 1;
+    }
+  });
+
+  await page.goto("/");
+  await expect(page.locator(".station-tags button").first()).toBeVisible();
+  await page.getByLabel("搜索始发城市", { exact: true }).fill("北京");
+  await page.getByRole("option", { name: /北京/ }).click();
+  await expect(page.locator(".station-tags button").first()).toBeVisible();
+  expect(refreshRequests).toBe(0);
+});
+
 test("刷新失败显示原因且保留可查询的旧快照", async ({ page }) => {
   // 故障分支使用接口替身，避免依赖真实远端故障或修改本地铁路数据。
   await page.route("**/api/data-status/refresh", route => route.fulfill({
