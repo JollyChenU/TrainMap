@@ -94,11 +94,12 @@ test("在线导出生成地图，离线 ZIP 在断网环境可独立打开", asy
     await expect(exported.locator(".leaflet-container")).toBeVisible();
     await expect(exported.locator(".leaflet-overlay-pane path").first()).toBeVisible();
     await expect(exported.locator("canvas.maplibregl-canvas")).toBeVisible();
-    const transferToggle = exported.getByRole("switch", { name: "包含中转" });
+    const transferToggle = exported.getByRole("switch", { name: "启用同站换乘" });
+    await expect(exported.getByRole("switch")).toHaveCount(1);
     await expect(transferToggle).toBeChecked();
+    await expect(transferToggle).toBeEnabled();
     await transferToggle.uncheck();
     await expect(transferToggle).not.toBeChecked();
-    await expect(exported.getByRole("switch", { name: "启用同站换乘" })).not.toBeChecked();
     // 在线矢量底图必须真实返回资源，不能仅凭地图容器存在判定成功。
     await expect.poll(() => basemapResponses, { timeout: 30000 }).toBeGreaterThan(0);
     await expect(exported.locator("body")).not.toContainText("Access blocked");

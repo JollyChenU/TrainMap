@@ -19,7 +19,6 @@ type MobileView = "map" | "list";
 
 const exportBootstrap: ExportBootstrap | null = window.__TARINMAP_EXPORT_DATA__ ?? null;
 const exportMode = Boolean(exportBootstrap);
-const exportTransfersEnabled = ref(Boolean(exportBootstrap?.direct_result));
 
 const cities = ref<City[]>([]);
 const stations = ref<Station[]>([]);
@@ -349,7 +348,6 @@ function showExportVariant(includeTransfers: boolean): void {
     : exportBootstrap.direct_result;
   result.value = nextResult;
   status.value = nextResult.data_status;
-  transfersEnabled.value = includeTransfers;
   maxTransfers.value = nextResult.request.max_transfers;
   if (!nextResult.cities.some(city => city.city_id === selectedCityId.value)) {
     selectedCityId.value = nextResult.cities[0]?.city_id ?? null;
@@ -459,7 +457,9 @@ watch([timeMode, concreteStart, concreteEnd, weeklyStartDay, weeklyStartTime,
     selectedCityId.value = null;
     selectedStationId.value = null;
   }, { deep: true });
-watch(exportTransfersEnabled, value => showExportVariant(value));
+watch(transfersEnabled, value => {
+  if (exportMode) showExportVariant(value);
+});
 onBeforeUnmount(() => { disposed = true; });
 </script>
 
@@ -525,7 +525,7 @@ onBeforeUnmount(() => { disposed = true; });
           {{ controlsCollapsed ? "›" : "‹" }}
           <span v-if="controlsCollapsed">查询条件</span>
         </button>
-        <fieldset v-show="!controlsCollapsed" class="panel-content" :disabled="exportMode || refreshing || loading" style="border:0;padding:0;margin:0;min-width:0">
+        <fieldset v-show="!controlsCollapsed" class="panel-content" :disabled="refreshing || loading" style="border:0;padding:0;margin:0;min-width:0">
         <section class="panel-section">
           <div class="section-heading">
             <span>01</span>
@@ -537,6 +537,7 @@ onBeforeUnmount(() => { disposed = true; });
               class="field"
               type="search"
               role="combobox"
+              :disabled="exportMode"
               aria-label="搜索始发城市"
               aria-autocomplete="list"
               :aria-expanded="originSearchFocused && !!originSearch.trim()"
@@ -562,13 +563,14 @@ onBeforeUnmount(() => { disposed = true; });
           <div class="station-filter-heading">
             <span>始发站</span>
             <span>{{ selectedOriginStationIds.length }}/{{ stations.length }} 已选</span>
-            <button type="button" @click="selectAllOriginStations">全选</button>
+            <button type="button" :disabled="exportMode" @click="selectAllOriginStations">全选</button>
           </div>
           <div class="station-tags" role="group" aria-label="筛选始发站">
             <button
               v-for="station in stations"
               :key="station.station_id"
               type="button"
+              :disabled="exportMode"
               :class="{ selected: selectedOriginStationIds.includes(station.station_id) }"
               :aria-pressed="selectedOriginStationIds.includes(station.station_id)"
               @click="toggleOriginStation(station.station_id)"
@@ -586,28 +588,28 @@ onBeforeUnmount(() => { disposed = true; });
           </div>
           <small>北京时间；每周时段映射到下一次对应日期，使用缓存日历作为参考。</small>
           <div class="segmented">
-            <button :class="{ active: timeMode === 'concrete' }" @click="timeMode = 'concrete'">具体日期</button>
-            <button :class="{ active: timeMode === 'weekly' }" @click="timeMode = 'weekly'">每周时段</button>
+            <button :disabled="exportMode" :class="{ active: timeMode === 'concrete' }" @click="timeMode = 'concrete'">具体日期</button>
+            <button :disabled="exportMode" :class="{ active: timeMode === 'weekly' }" @click="timeMode = 'weekly'">每周时段</button>
           </div>
           <div v-if="timeMode === 'concrete'" class="time-fields">
-            <label>最早出发<input v-model="concreteStart" class="field" type="datetime-local" /></label>
-            <label>最晚到达<input v-model="concreteEnd" class="field" type="datetime-local" /></label>
+            <label>最早出发<input v-model="concreteStart" class="field" type="datetime-local" :disabled="exportMode" /></label>
+            <label>最晚到达<input v-model="concreteEnd" class="field" type="datetime-local" :disabled="exportMode" /></label>
           </div>
           <div v-else class="time-fields">
             <label>最早出发
               <div class="inline-fields">
-                <select v-model="weeklyStartDay" class="field">
+                <select v-model="weeklyStartDay" class="field" :disabled="exportMode">
                   <option v-for="day in weekdayOptions" :key="day.value" :value="day.value">{{ day.label }}</option>
                 </select>
-                <input v-model="weeklyStartTime" class="field" type="time" />
+                <input v-model="weeklyStartTime" class="field" type="time" :disabled="exportMode" />
               </div>
             </label>
             <label>最晚到达
               <div class="inline-fields">
-                <select v-model="weeklyEndDay" class="field">
+                <select v-model="weeklyEndDay" class="field" :disabled="exportMode">
                   <option v-for="day in weekdayOptions" :key="day.value" :value="day.value">{{ day.label }}</option>
                 </select>
-                <input v-model="weeklyEndTime" class="field" type="time" />
+                <input v-model="weeklyEndTime" class="field" type="time" :disabled="exportMode" />
               </div>
             </label>
           </div>
@@ -620,29 +622,34 @@ onBeforeUnmount(() => { disposed = true; });
           </div>
           <div class="check-grid">
             <label v-for="type in trainTypeOptions" :key="type.value" class="check-pill">
-              <input v-model="selectedTrainTypes" type="checkbox" :value="type.value" />
+              <input v-model="selectedTrainTypes" type="checkbox" :value="type.value" :disabled="exportMode" />
               <span>{{ type.label }}</span>
             </label>
           </div>
           <label class="switch-row">
             <span><strong>启用同站换乘</strong><small>不包含同城异站接驳</small></span>
-            <input v-model="transfersEnabled" type="checkbox" role="switch" />
+            <input
+              v-model="transfersEnabled"
+              type="checkbox"
+              role="switch"
+              :disabled="exportMode && !exportBootstrap?.direct_result"
+            />
           </label>
           <div v-if="transfersEnabled" class="transfer-fields">
             <label>最多换乘
-              <select v-model="maxTransfers" class="field">
+              <select v-model="maxTransfers" class="field" :disabled="exportMode">
                 <option :value="1">1 次</option>
                 <option :value="2">2 次</option>
                 <option :value="3">3 次</option>
               </select>
             </label>
             <label>最短间隔
-              <div class="number-field"><input v-model.number="minTransferMinutes" type="number" min="0" max="720" /><span>分钟</span></div>
+              <div class="number-field"><input v-model.number="minTransferMinutes" type="number" min="0" max="720" :disabled="exportMode" /><span>分钟</span></div>
             </label>
           </div>
         </section>
 
-        <button class="primary-button" :disabled="loading || refreshing" @click="calculate">
+        <button class="primary-button" :disabled="exportMode || loading || refreshing" @click="calculate">
           <span v-if="loading" class="spinner"></span>
           {{ loading ? "正在计算可达范围…" : "计算铁路可达范围" }}
         </button>
@@ -660,11 +667,6 @@ onBeforeUnmount(() => { disposed = true; });
             <p v-else class="muted">设置条件后开始计算</p>
           </div>
           <div class="toolbar-actions">
-            <label v-if="exportMode && exportBootstrap?.direct_result" class="export-transfer-toggle">
-              <span>包含中转</span>
-              <input v-model="exportTransfersEnabled" type="checkbox" role="switch" />
-            </label>
-            <span v-else-if="exportMode" class="muted">仅直达结果</span>
             <button v-if="!exportMode && lastQueryId" :disabled="loading || refreshing" @click="restoreQuery">恢复上次查询</button>
             <button v-if="!exportMode" :disabled="!result" @click="exportResult('online')">导出 HTML</button>
             <button v-if="!exportMode" :disabled="!result" @click="exportResult('offline')">离线压缩包</button>
