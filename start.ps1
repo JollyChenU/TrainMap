@@ -18,7 +18,14 @@ if ($LASTEXITCODE -ne 0) {
     & $python -m pip install -e $projectRoot
     if ($LASTEXITCODE -ne 0) { throw "安装后端依赖失败，请检查网络和 pip 配置。" }
 }
-if (-not (Test-Path (Join-Path $frontendPath "node_modules"))) {
+# 拉取新代码可能带来新依赖：依赖目录缺失，或锁定文件比已装依赖更新时重新安装。
+$modulesPath = Join-Path $frontendPath "node_modules"
+$lockPath = Join-Path $frontendPath "package-lock.json"
+$needsInstall = -not (Test-Path $modulesPath)
+if ((-not $needsInstall) -and (Test-Path $lockPath)) {
+    $needsInstall = (Get-Item $lockPath).LastWriteTime -gt (Get-Item $modulesPath).LastWriteTime
+}
+if ($needsInstall) {
     npm ci --prefix $frontendPath
     if ($LASTEXITCODE -ne 0) { throw "安装前端依赖失败。" }
 }
