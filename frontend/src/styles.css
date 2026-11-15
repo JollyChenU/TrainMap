@@ -279,6 +279,54 @@ button {
   box-shadow: 0 0 0 3px rgb(61 135 144 / 10%);
 }
 
+.origin-picker {
+  position: relative;
+}
+
+.origin-results {
+  position: absolute;
+  z-index: 80;
+  top: calc(100% + 5px);
+  right: 0;
+  left: 0;
+  max-height: 260px;
+  padding: 5px;
+  overflow: auto;
+  border: 1px solid #c9d9da;
+  border-radius: 11px;
+  background: white;
+  box-shadow: 0 14px 34px rgb(20 66 77 / 18%);
+}
+
+.origin-results button {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  justify-content: space-between;
+  padding: 9px 10px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: #23414a;
+  text-align: left;
+  cursor: pointer;
+}
+
+.origin-results button:hover,
+.origin-results button[aria-selected="true"] {
+  background: #eaf3f2;
+}
+
+.origin-results span,
+.origin-results p {
+  color: #789097;
+  font-size: 11px;
+}
+
+.origin-results p {
+  margin: 8px;
+}
+
 .station-tags {
   display: flex;
   flex-wrap: wrap;
@@ -751,6 +799,14 @@ input[role="switch"]:checked::after {
 
 .itinerary section + section {
   margin-top: 12px;
+}
+
+.itinerary section.selected-station {
+  margin-right: -5px;
+  margin-left: -5px;
+  padding: 7px 5px;
+  border-radius: 8px;
+  background: #eef6f5;
 }
 
 .station-title {

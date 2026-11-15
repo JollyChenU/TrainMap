@@ -21,6 +21,7 @@ const stations = ref<Station[]>([]);
 const status = ref<DataStatus | null>(null);
 const result = ref<ReachabilityResponse | null>(null);
 const selectedCityId = ref<string | null>(null);
+const selectedStationId = ref<string | null>(null);
 const loading = ref(false);
 const refreshing = ref(false);
 const errorMessage = ref("");
@@ -33,12 +34,16 @@ const verifying = ref(false);
 const verification = ref<Verification | null>(null);
 const lastQueryId = ref<string | null>(null);
 const originSearch = ref("");
+const originSearchFocused = ref(false);
 let disposed = false;
-const availableCities = computed(() => cities.value.filter(
-  city => city.name.includes(originSearch.value.trim()) || city.city_id === originCityId.value,
-));
+const DEFAULT_ORIGIN_CITY_NAME = "杭州";
+const originCandidates = computed(() => {
+  const keyword = originSearch.value.trim();
+  if (!keyword) return [];
+  return cities.value.filter(city => city.name.includes(keyword)).slice(0, 12);
+});
 
-const originCityId = ref("beijing");
+const originCityId = ref("");
 const timeMode = ref<TimeMode>("weekly");
 const concreteStart = ref("");
 const concreteEnd = ref("");
@@ -82,13 +87,27 @@ const selectedCity = computed(
 );
 const filteredCities = computed(() => {
   const keyword = destinationSearch.value.trim();
-  if (!result.value || !keyword) return result.value?.cities ?? [];
-  return result.value.cities.filter(
+  if (!result.value) return [];
+  const matches = keyword ? result.value.cities.filter(
     (city) =>
       city.city_name.includes(keyword) ||
       city.stations.some((station) => station.station_name.includes(keyword)),
-  );
+  ) : [...result.value.cities];
+  return matches.sort((left, right) => {
+    if (left.city_id === selectedCityId.value) return -1;
+    if (right.city_id === selectedCityId.value) return 1;
+    return 0;
+  });
 });
+
+function orderedStations(city: CityResult) {
+  if (!selectedStationId.value) return city.stations;
+  return [...city.stations].sort((left, right) => {
+    if (left.station_id === selectedStationId.value) return -1;
+    if (right.station_id === selectedStationId.value) return 1;
+    return 0;
+  });
+}
 
 function pad(value: number): string {
   return String(value).padStart(2, "0");
@@ -189,6 +208,7 @@ async function handleOriginChange(): Promise<void> {
   loading.value = true;
   result.value = null;
   selectedCityId.value = null;
+  selectedStationId.value = null;
   stations.value = [];
   errorMessage.value = "";
   try {
@@ -200,6 +220,22 @@ async function handleOriginChange(): Promise<void> {
   } finally {
     loading.value = false;
   }
+}
+
+function closeOriginResults(): void {
+  window.setTimeout(() => { originSearchFocused.value = false; }, 120);
+}
+
+async function selectOriginCity(city: City): Promise<void> {
+  if (city.city_id === originCityId.value) {
+    originSearch.value = "";
+    originSearchFocused.value = false;
+    return;
+  }
+  originCityId.value = city.city_id;
+  originSearch.value = "";
+  originSearchFocused.value = false;
+  await handleOriginChange();
 }
 
 async function refreshData(): Promise<void> {
@@ -218,11 +254,12 @@ async function refreshData(): Promise<void> {
     const oldName = originCity.value?.name;
     [cities.value, status.value] = await Promise.all([api.cities(), api.dataStatus()]);
     originCityId.value = cities.value.find(city => city.name === oldName)?.city_id
-      ?? cities.value.find(city => city.name === "北京")?.city_id
+      ?? cities.value.find(city => city.name === DEFAULT_ORIGIN_CITY_NAME)?.city_id
       ?? cities.value[0]?.city_id ?? "";
     await loadOriginStations();
     result.value = null;
     selectedCityId.value = null;
+    selectedStationId.value = null;
     refreshMessage.value = "";
   } catch (error) {
     errorMessage.value = error instanceof Error ? error.message : "刷新失败";
@@ -260,6 +297,7 @@ async function calculate(): Promise<void> {
     try { localStorage.setItem("tarinmap-last-query", result.value.query_id); } catch { /* 隐私模式允许不保存。 */ }
     status.value = result.value.data_status;
     selectedCityId.value = result.value.cities[0]?.city_id ?? null;
+    selectedStationId.value = null;
     mobileView.value = "map";
   } catch (error) {
     errorMessage.value = error instanceof Error ? error.message : "计算失败";
@@ -268,8 +306,9 @@ async function calculate(): Promise<void> {
   }
 }
 
-function selectCity(cityId: string): void {
+function selectLocation(cityId: string, stationId?: string): void {
   selectedCityId.value = cityId;
+  selectedStationId.value = stationId ?? null;
   if (window.matchMedia("(max-width: 780px)").matches) mobileView.value = "list";
 }
 
@@ -312,6 +351,7 @@ async function restoreQuery(): Promise<void> {
     await nextTick();
     result.value = saved;
     selectedCityId.value = saved.cities[0]?.city_id ?? null;
+    selectedStationId.value = null;
   } catch (error) {
     errorMessage.value = error instanceof Error ? error.message : "历史查询不存在";
   } finally {
@@ -326,7 +366,7 @@ onMounted(async () => {
       api.cities(),
       api.dataStatus(),
     ]);
-    originCityId.value = cities.value.find(city => city.name === "北京")?.city_id
+    originCityId.value = cities.value.find(city => city.name === DEFAULT_ORIGIN_CITY_NAME)?.city_id
       ?? cities.value[0]?.city_id ?? "";
     await loadOriginStations();
     if (status.value?.source_kind === "demo") {
@@ -344,7 +384,11 @@ onMounted(async () => {
 // 条件变更后移除旧结果，避免将旧范围误当成当前条件计算结果。
 watch([timeMode, concreteStart, concreteEnd, weeklyStartDay, weeklyStartTime,
   weeklyEndDay, weeklyEndTime, transfersEnabled, maxTransfers, minTransferMinutes,
-  selectedTrainTypes], () => { result.value = null; selectedCityId.value = null; }, { deep: true });
+  selectedTrainTypes], () => {
+    result.value = null;
+    selectedCityId.value = null;
+    selectedStationId.value = null;
+  }, { deep: true });
 onBeforeUnmount(() => { disposed = true; });
 </script>
 
@@ -416,18 +460,40 @@ onBeforeUnmount(() => { disposed = true; });
             <span>01</span>
             <div><h2>选择始发城市</h2><p>城市内所有客运站均可作为起点</p></div>
           </div>
-          <input v-model="originSearch" class="field" type="search" aria-label="搜索始发城市" placeholder="搜索始发城市" />
-          <select v-model="originCityId" class="field" aria-label="始发城市" @change="handleOriginChange">
-            <option v-for="city in availableCities" :key="city.city_id" :value="city.city_id">
-              {{ city.name }} · {{ city.station_count }} 个车站
-            </option>
-          </select>
+          <div class="origin-picker">
+            <input
+              v-model="originSearch"
+              class="field"
+              type="search"
+              role="combobox"
+              aria-label="搜索始发城市"
+              aria-autocomplete="list"
+              :aria-expanded="originSearchFocused && !!originSearch.trim()"
+              :placeholder="`搜索始发城市（当前：${originCity?.name ?? '加载中'}）`"
+              @focus="originSearchFocused = true"
+              @blur="closeOriginResults"
+            />
+            <div v-if="originSearchFocused && originSearch.trim()" class="origin-results" role="listbox">
+              <button
+                v-for="city in originCandidates"
+                :key="city.city_id"
+                type="button"
+                role="option"
+                :aria-selected="city.city_id === originCityId"
+                @mousedown.prevent="selectOriginCity(city)"
+              >
+                <strong>{{ city.name }}</strong>
+                <span>{{ city.station_count }} 个客运站</span>
+              </button>
+              <p v-if="!originCandidates.length">没有匹配的城市</p>
+            </div>
+          </div>
           <div class="station-tags" style="max-height:120px;overflow:auto">
             <span v-for="station in stations" :key="station.station_id">
               {{ station.name }}
             </span>
           </div>
-          <small>按快照中已收录的车站计算；城市标记位于所含车站的平均位置。</small>
+          <small>仅按快照中可办理上下客业务的客运站计算；地图城市点取该城市的代表车站位置。</small>
         </section>
 
         <section class="panel-section">
@@ -533,9 +599,11 @@ onBeforeUnmount(() => { disposed = true; });
           <div class="map-column">
             <ReachabilityMap
               :origin="originCity"
+              :origin-stations="stations"
               :cities="result?.cities ?? []"
               :selected-city-id="selectedCityId"
-              @select="selectCity"
+              :selected-station-id="selectedStationId"
+              @select="selectLocation"
             />
             <div v-if="!result" class="empty-map">
               <div class="compass">↗</div>
@@ -569,7 +637,7 @@ onBeforeUnmount(() => { disposed = true; });
                 class="city-card"
                 :class="{ selected: city.city_id === selectedCityId }"
               >
-                <button class="city-summary" @click="selectCity(city.city_id)">
+                <button class="city-summary" @click="selectLocation(city.city_id)">
                   <span class="route-badge" :class="{ transfer: !city.direct_available }">
                     {{ city.direct_available ? "直" : "换" }}
                   </span>
@@ -580,7 +648,11 @@ onBeforeUnmount(() => { disposed = true; });
                   <time>{{ formatDateTime(city.earliest_arrival_at) }}</time>
                 </button>
                 <div v-if="city.city_id === selectedCityId" class="itinerary">
-                  <section v-for="station in city.stations" :key="station.station_id">
+                  <section
+                    v-for="station in orderedStations(city)"
+                    :key="station.station_id"
+                    :class="{ 'selected-station': station.station_id === selectedStationId }"
+                  >
                     <div class="station-title">
                       <strong>{{ station.station_name }}</strong>
                       <span>{{ station.transfers }} 次换乘</span>

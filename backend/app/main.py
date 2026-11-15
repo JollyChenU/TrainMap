@@ -112,7 +112,7 @@ def list_cities(q: str = Query(default="", max_length=40)) -> list[dict]:
             **asdict(city),
             "station_count": station_counts.get(city.city_id, 0),
         }
-        for city in cities
+        for city in cities if station_counts.get(city.city_id, 0) > 0
     ]
 
 

@@ -21,7 +21,7 @@ from typing import Callable
 from .models import City, Station, StopTime, Trip
 
 REPOSITORY = "https://github.com/wensimehrp/chinese-railway-gtfs"
-ADAPTER_VERSION = "calendar-city-exact-v2"
+ADAPTER_VERSION = "calendar-city-passenger-medoid-v3"
 STATION_URL = "https://kyfw.12306.cn/otn/resources/js/framework/station_name.js"
 Progress = Callable[[str], None]
 
@@ -150,13 +150,6 @@ def parse_feed(path: Path, mapping: dict[str, str], version: str) -> Snapshot:
         station = Station(row["stop_id"], city_id, row["stop_name"], lon, lat)
         stations.append(station)
         by_city[name].append(station)
-    cities = [
-        City(items[0].city_id, name,
-             sum(s.longitude for s in items) / len(items),
-             sum(s.latitude for s in items) / len(items))
-        for name, items in by_city.items()
-    ]
-
     trips, rejected = [], []
     for row in trip_rows:
         tid = row["trip_id"]
@@ -187,6 +180,31 @@ def parse_feed(path: Path, mapping: dict[str, str], version: str) -> Snapshot:
             rejected.append({"trip_id": tid, "code": row.get("trip_short_name", tid), "reason": str(error)})
     if not trips or len(rejected) > len(trip_rows) * 0.1:
         raise ValueError("异常车次超过 10% 或没有有效车次，拒绝替换旧快照")
+
+    passenger_station_ids = {
+        stop.station_id
+        for trip in trips
+        for stop in trip.stops
+        if stop.can_board or stop.can_alight
+    }
+
+    def representative(items: list[Station]) -> Station:
+        """从客运站中返回真实代表点，不制造落在站外的平均坐标。"""
+
+        passenger_items = [item for item in items if item.station_id in passenger_station_ids]
+        candidates = passenger_items or items
+        return min(candidates, key=lambda candidate: sum(
+            (candidate.longitude - other.longitude) ** 2
+            + (candidate.latitude - other.latitude) ** 2
+            for other in candidates
+        ))
+
+    cities = [
+        City(items[0].city_id, name, center.longitude, center.latitude)
+        for name, items in by_city.items()
+        for center in (representative(items),)
+    ]
+
     digest = hashlib.sha256()
     with path.open("rb") as stream:
         for chunk in iter(lambda: stream.read(1024 * 1024), b""):

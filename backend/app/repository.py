@@ -290,14 +290,22 @@ class RailwayRepository:
         return City(**dict(row)) if row else None
 
     def list_stations(self, city_id: str | None = None) -> list[Station]:
-        """列出全部车站，或只列出某个城市的车站。"""
+        """仅列出至少办理一次上下客业务的客运站。"""
 
-        sql = "SELECT station_id, city_id, name, longitude, latitude FROM stations"
+        sql = """
+            SELECT s.station_id, s.city_id, s.name, s.longitude, s.latitude
+            FROM stations s
+            WHERE EXISTS (
+                SELECT 1 FROM stop_times st
+                WHERE st.station_id = s.station_id
+                  AND (st.can_board = 1 OR st.can_alight = 1)
+            )
+        """
         params: Iterable[str] = ()
         if city_id:
-            sql += " WHERE city_id = ?"
+            sql += " AND s.city_id = ?"
             params = (city_id,)
-        sql += " ORDER BY name"
+        sql += " ORDER BY s.name"
         with self.connect() as connection:
             rows = connection.execute(sql, tuple(params)).fetchall()
         return [Station(**dict(row)) for row in rows]

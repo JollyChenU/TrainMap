@@ -71,6 +71,33 @@ def test_transaction_rollback(tmp_path):
     assert len(repository.list_trips()) == 7
 
 
+def test_catalog_only_lists_passenger_stations(tmp_path):
+    """没有任何上下客业务的站点不能出现在客运站目录中。"""
+
+    repository = RailwayRepository(tmp_path / "passenger-only.db")
+    with repository.connect() as connection:
+        connection.execute(
+            "INSERT INTO stations VALUES (?, ?, ?, ?, ?)",
+            ("unused", "beijing", "北京货运测试站", 116.5, 39.8),
+        )
+    assert "北京货运测试站" not in {
+        station.name for station in repository.list_stations("beijing")
+    }
+
+
+def test_city_coordinate_is_a_real_station(tmp_path):
+    """城市代表点必须落在真实车站，不能取两个站之间的坐标均值。"""
+
+    snapshot = feed(tmp_path)
+    city = next(item for item in snapshot.cities if item.name == "甲城")
+    station_points = {
+        (station.longitude, station.latitude)
+        for station in snapshot.stations
+        if station.city_id == city.city_id
+    }
+    assert (city.longitude, city.latitude) in station_points
+
+
 def test_refresh_failure_keeps_previous(monkeypatch):
     """下载失败应显示错误，不冒充刷新成功。"""
 
