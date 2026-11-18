@@ -9,7 +9,7 @@ export default defineConfig({
   workers: 1,
   timeout: 60000,
   use: {
-    baseURL: "http://127.0.0.1:8000",
+    baseURL: "http://127.0.0.1:8023",
     channel: "msedge",
     viewport: { width: 1440, height: 1000 },
   },

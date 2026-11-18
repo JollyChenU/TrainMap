@@ -34,6 +34,6 @@ npm run build --prefix $frontendPath
 if ($LASTEXITCODE -ne 0) { throw "前端构建失败。" }
 
 # 使用绝对应用目录，允许从任意 PowerShell 工作目录调用。
-Write-Host "正在启动铁路活动范围地图：http://127.0.0.1:8000"
-& $python -m uvicorn backend.app.main:app --app-dir $projectRoot --host 127.0.0.1 --port 8000
+Write-Host "正在启动铁路活动范围地图：http://127.0.0.1:8023"
+& $python -m uvicorn backend.app.main:app --app-dir $projectRoot --host 127.0.0.1 --port 8023
 if ($LASTEXITCODE -ne 0) { throw "服务启动失败，请查看上方错误（依赖、数据目录权限或端口占用）。" }
