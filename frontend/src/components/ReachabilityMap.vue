@@ -6,10 +6,10 @@ import { setWorkerUrl } from "maplibre-gl";
 import maplibreWorkerUrl from "maplibre-gl/dist/maplibre-gl-worker.mjs?worker&url";
 import "maplibre-gl/dist/maplibre-gl.css";
 import type { City, CityResult, Station } from "../api/types";
+import type { DisplayMode } from "../comparison";
 
 setWorkerUrl(maplibreWorkerUrl);
 
-type MapDisplayMode = "city" | "station";
 type LabelMode = "auto" | "always" | "hidden";
 type PointLike = Pick<Station, "latitude" | "longitude">;
 
@@ -24,9 +24,9 @@ interface MarkerDescriptor {
 }
 
 const props = defineProps<{
-  origin: City | null;
-  originStations: Station[];
+  origins: { city: City; stations: Station[] }[];
   cities: CityResult[];
+  coverage?: Map<string, string>;
   selectedCityId: string | null;
   selectedStationId: string | null;
   useExportBasemap?: boolean;
@@ -41,7 +41,7 @@ let resultLayer: L.LayerGroup | null = null;
 let resizeObserver: ResizeObserver | null = null;
 const mapElement = ref<HTMLElement | null>(null);
 const fullscreen = ref(false);
-const displayMode = ref<MapDisplayMode>("station");
+const displayMode = defineModel<DisplayMode>("displayMode", { required: true });
 const labelMode = ref<LabelMode>("auto");
 const labelDensityThreshold = ref(30);
 const tileState = ref<"loading" | "ready" | "error">("loading");
@@ -80,15 +80,26 @@ function representativeStation<T extends PointLike>(stations: T[]): T | null {
 
 function markerDescriptors(): MarkerDescriptor[] {
   const descriptors: MarkerDescriptor[] = [];
-  if (displayMode.value === "city") {
-    const originStation = representativeStation(props.originStations);
-    if (props.origin && originStation) {
-      descriptors.push({
-        point: [originStation.latitude, originStation.longitude],
-        name: `${props.origin.name} · 始发城市`,
+  const origins = new Map<string, MarkerDescriptor>();
+  for (const { city, stations } of props.origins) {
+    if (displayMode.value === "city" || !stations.length) {
+      const point = representativeStation(stations) ?? city;
+      origins.set(city.city_id, {
+        point: [point.latitude, point.longitude],
+        name: city.name + " · 始发城市",
         kind: "origin",
       });
+    } else {
+      for (const station of stations) {
+        origins.set(station.station_id, {
+          point: [station.latitude, station.longitude],
+          name: station.name + " · 始发站",
+          kind: "origin",
+        });
+      }
     }
+  }
+  if (displayMode.value === "city") {
     for (const city of props.cities) {
       const station = representativeStation(city.stations);
       if (!station) continue;
@@ -100,17 +111,9 @@ function markerDescriptors(): MarkerDescriptor[] {
         direct: city.direct_available,
       });
     }
-    return descriptors;
+    return [...descriptors, ...origins.values()];
   }
 
-  for (const station of props.originStations) {
-    descriptors.push({
-      point: [station.latitude, station.longitude],
-      name: `${station.name} · 始发站`,
-      kind: "origin",
-      stationId: station.station_id,
-    });
-  }
   for (const city of props.cities) {
     for (const station of city.stations) {
       descriptors.push({
@@ -124,7 +127,7 @@ function markerDescriptors(): MarkerDescriptor[] {
       });
     }
   }
-  return descriptors;
+  return [...descriptors, ...origins.values()];
 }
 
 function drawResults(fit = true): void {
@@ -143,10 +146,12 @@ function drawResults(fit = true): void {
 
   for (const item of descriptors) {
     const isOrigin = item.kind === "origin";
+    const coverage = props.coverage?.get(item.stationId ?? item.cityId ?? "");
     const selected = item.stationId
       ? item.stationId === props.selectedStationId
       : item.cityId === props.selectedCityId;
     const marker = L.circleMarker(item.point, {
+      className: isOrigin ? "origin-marker" : "destination-marker",
       radius: selected ? 10 : isOrigin ? 8 : displayMode.value === "city" ? 8 : 5,
       color: selected ? "#132f3a" : "#ffffff",
       weight: selected ? 4 : isOrigin ? 3 : 2,
@@ -155,6 +160,7 @@ function drawResults(fit = true): void {
     });
     const detail = isOrigin
       ? item.name
+      : coverage ? item.name + " · " + coverage + " 可达"
       : displayMode.value === "city"
         ? `${item.name} · ${item.direct ? "可直达" : "需换乘"}`
         : `${item.name} · ${item.transfers ?? 0} 次换乘`;
@@ -176,8 +182,6 @@ function drawResults(fit = true): void {
     map.fitBounds(L.latLngBounds(points), { padding: [36, 36], maxZoom: 7, animate: false });
   } else if (points.length === 1) {
     map.setView(points[0], 7);
-  } else if (props.origin) {
-    map.setView([props.origin.latitude, props.origin.longitude], 5);
   }
 }
 
@@ -194,12 +198,13 @@ function handleKeydown(event: KeyboardEvent): void {
 }
 
 onMounted(() => {
-  const initialCenter: L.LatLngExpression = props.origin
-    ? [props.origin.latitude, props.origin.longitude]
+  const origin = props.origins[0]?.city;
+  const initialCenter: L.LatLngExpression = origin
+    ? [origin.latitude, origin.longitude]
     : [35.2, 104.2];
   map = L.map(mapElement.value as HTMLElement, {
     center: initialCenter,
-    zoom: props.origin ? 5 : 4,
+    zoom: origin ? 5 : 4,
     minZoom: 3,
     maxZoom: 18,
     zoomDelta: 0.5,
@@ -250,7 +255,7 @@ onMounted(() => {
 });
 
 watch(
-  () => [props.origin, props.originStations, props.cities],
+  () => [props.origins, props.cities, props.coverage],
   () => drawResults(),
   { deep: true },
 );
@@ -283,8 +288,8 @@ onBeforeUnmount(() => {
       <div class="map-control-row">
         <span>标记</span>
         <div class="mode-switch compact-switch">
-          <button :class="{ active: displayMode === 'city' }" @click="displayMode = 'city'">城市</button>
-          <button :class="{ active: displayMode === 'station' }" @click="displayMode = 'station'">车站</button>
+          <button :class="{ active: displayMode === 'city' }" :aria-pressed="displayMode === 'city'" @click="displayMode = 'city'">城市</button>
+          <button :class="{ active: displayMode === 'station' }" :aria-pressed="displayMode === 'station'" @click="displayMode = 'station'">车站</button>
         </div>
       </div>
       <div class="map-control-row label-row">
@@ -300,6 +305,7 @@ onBeforeUnmount(() => {
         <input v-model.number="labelDensityThreshold" type="range" min="5" max="80" step="5" />
         <output>{{ labelDensityThreshold }}</output>
       </label>
+      <slot name="comparison" />
     </div>
     <div class="map-legend" aria-label="地图图例">
       <span><i class="origin-dot"></i>始发</span>
@@ -319,7 +325,7 @@ onBeforeUnmount(() => {
 .map-frame.is-fullscreen #reachability-map { width: 100%; height: 100%; min-height: 100%; border-radius: 0; }
 .fullscreen-button { position: absolute; z-index: 520; top: 84px; left: 12px; display: grid; width: 36px; height: 36px; border: 1px solid rgb(31 27 22 / 10%); border-radius: 8px; place-items: center; background: #fdfbf7; box-shadow: 0 1px 2px rgb(31 27 22 / 10%); color: #5e554a; font-size: 18px; font-weight: 500; cursor: pointer; }
 .fullscreen-button:hover { background: #f4f8f8; }
-.map-display-controls { position: absolute; z-index: 520; top: 12px; left: 52px; display: grid; gap: 6px; min-width: 260px; padding: 8px; border: 1px solid rgb(25 37 35 / 10%); border-radius: 12px; background: rgb(253 251 247 / 96%); box-shadow: 0 8px 24px rgb(31 27 22 / 8%); color: #5e554a; }
+.map-display-controls { position: absolute; z-index: 520; top: 12px; left: 52px; display: grid; gap: 6px; width: 260px; max-width: calc(100% - 64px); padding: 8px; border: 1px solid rgb(25 37 35 / 10%); border-radius: 12px; background: rgb(253 251 247 / 96%); box-shadow: 0 8px 24px rgb(31 27 22 / 8%); color: #5e554a; }
 .map-control-row { display: grid; grid-template-columns: 36px 1fr; gap: 8px; align-items: center; }
 .map-control-row > span, .density-control > span { font-size: 11px; color: #7b7266; }
 .mode-switch { display: grid; padding: 2px; border-radius: 8px; background: #efe9df; }
@@ -341,6 +347,6 @@ onBeforeUnmount(() => {
 @media (max-width: 780px) {
   #reachability-map { height: 48vh; min-height: 370px; border-radius: 16px; }
   .map-caption { display: none; }
-  .map-display-controls { right: 8px; left: 48px; min-width: 0; }
+  .map-display-controls { right: 8px; left: 48px; width: auto; max-width: none; }
 }
 </style>

@@ -13,6 +13,7 @@ import type {
   ExportBootstrap,
 } from "./api/types";
 import ReachabilityMap from "./components/ReachabilityMap.vue";
+import { comparePlaces, type DisplayMode, type ResultView } from "./comparison";
 
 type TimeMode = "concrete" | "weekly";
 type MobileView = "map" | "list";
@@ -20,10 +21,61 @@ type MobileView = "map" | "list";
 const exportBootstrap: ExportBootstrap | null = window.__TARINMAP_EXPORT_DATA__ ?? null;
 const exportMode = Boolean(exportBootstrap);
 
+function defaultConfig() {
+  return {
+    originCityId: "", selectedOriginStationIds: [] as string[],
+    timeMode: "weekly" as TimeMode, concreteStart: "", concreteEnd: "",
+    weeklyStartDay: 5, weeklyStartTime: "20:00", weeklyEndDay: 6, weeklyEndTime: "12:00",
+    transfersEnabled: false, maxTransfers: 1, minTransferMinutes: 30,
+    selectedTrainTypes: ["G", "D", "C", "K"],
+  };
+}
+
+type Config = ReturnType<typeof defaultConfig>;
+interface OriginPage {
+  id: string;
+  config: Config;
+  stations: Station[];
+  result: ReachabilityResponse | null;
+}
+
+function newPage(id = crypto.getRandomValues(new Uint32Array(4)).join("-"), config = defaultConfig()): OriginPage {
+  return { id, config, stations: [], result: null };
+}
+
+const profilesKey = "tarinmap-origin-pages";
+const pages = ref<OriginPage[]>([newPage()]);
+const activePageId = ref(pages.value[0].id);
+const excludedPageIds = ref<string[]>([]);
+const activePage = computed(() => pages.value.find(page => page.id === activePageId.value)!);
+const resultView = ref<ResultView>("single");
+const displayMode = ref<DisplayMode>("station");
+const views = [
+  { id: "single", name: "单城" },
+  { id: "intersection", name: "交集" },
+  { id: "union", name: "并集" },
+] as const;
+
+function field<K extends keyof Config>(key: K) {
+  return computed({
+    get: () => activePage.value.config[key],
+    set: (value: Config[K]) => {
+      activePage.value.config[key] = value;
+      if (!exportMode) activePage.value.result = null;
+    },
+  });
+}
+
 const cities = ref<City[]>([]);
-const stations = ref<Station[]>([]);
+const stations = computed({
+  get: () => activePage.value.stations,
+  set: (value) => { activePage.value.stations = value; },
+});
 const status = ref<DataStatus | null>(null);
-const result = ref<ReachabilityResponse | null>(null);
+const result = computed({
+  get: () => activePage.value.result,
+  set: (value) => { activePage.value.result = value; },
+});
 const selectedCityId = ref<string | null>(null);
 const selectedStationId = ref<string | null>(null);
 const loading = ref(false);
@@ -39,7 +91,7 @@ const verification = ref<Verification | null>(null);
 const lastQueryId = ref<string | null>(null);
 const originSearch = ref("");
 const originSearchFocused = ref(false);
-const selectedOriginStationIds = ref<string[]>([]);
+const originInput = ref<HTMLInputElement | null>(null);
 let disposed = false;
 const DEFAULT_ORIGIN_CITY_NAME = "杭州";
 const originCandidates = computed(() => {
@@ -48,18 +100,19 @@ const originCandidates = computed(() => {
   return cities.value.filter(city => city.name.includes(keyword)).slice(0, 12);
 });
 
-const originCityId = ref("");
-const timeMode = ref<TimeMode>("weekly");
-const concreteStart = ref("");
-const concreteEnd = ref("");
-const weeklyStartDay = ref(5);
-const weeklyStartTime = ref("20:00");
-const weeklyEndDay = ref(6);
-const weeklyEndTime = ref("12:00");
-const transfersEnabled = ref(false);
-const maxTransfers = ref(1);
-const minTransferMinutes = ref(30);
-const selectedTrainTypes = ref(["G", "D", "C", "K"]);
+const originCityId = field("originCityId");
+const selectedOriginStationIds = field("selectedOriginStationIds");
+const timeMode = field("timeMode");
+const concreteStart = field("concreteStart");
+const concreteEnd = field("concreteEnd");
+const weeklyStartDay = field("weeklyStartDay");
+const weeklyStartTime = field("weeklyStartTime");
+const weeklyEndDay = field("weeklyEndDay");
+const weeklyEndTime = field("weeklyEndTime");
+const transfersEnabled = field("transfersEnabled");
+const maxTransfers = field("maxTransfers");
+const minTransferMinutes = field("minTransferMinutes");
+const selectedTrainTypes = field("selectedTrainTypes");
 
 const trainTypeOptions = [
   { value: "G", label: "高铁 G" },
@@ -85,15 +138,90 @@ const weekdayOptions = [
 const originCity = computed(
   () => cities.value.find((city) => city.city_id === originCityId.value) ?? null,
 );
-const selectedOriginStations = computed(() => {
-  const selected = new Set(selectedOriginStationIds.value);
-  return stations.value.filter(station => selected.has(station.station_id));
+const comparing = computed(() => resultView.value !== "single");
+const configuredPages = computed(() => pages.value.filter(page => findCity(page)));
+const participatingPages = computed(() => configuredPages.value.filter(page => !excludedPageIds.value.includes(page.id)));
+const originOptions = computed(() => configuredPages.value.map(page => ({
+  id: page.id,
+  name: pageName(page),
+  selected: !excludedPageIds.value.includes(page.id),
+})));
+const comparisonReady = computed(() => participatingPages.value.length > 0 && participatingPages.value.every(
+  page => page.result && page.result.data_status.fetched_at === status.value?.fetched_at,
+));
+const listByPlace = computed(() => comparing.value || (!exportMode && displayMode.value === "station"));
+const comparedPlaces = computed(() => {
+  if (!listByPlace.value) return [];
+  const inputs = comparing.value
+    ? comparisonReady.value ? participatingPages.value : []
+    : [activePage.value];
+  return comparePlaces(inputs.flatMap(page => page.result ? [{
+    origin: { id: page.id, name: pageName(page), selected: true },
+    query: page.result,
+  }] : []), displayMode.value, resultView.value === "intersection");
 });
-const selectedCity = computed(
-  () =>
-    result.value?.cities.find((city) => city.city_id === selectedCityId.value) ??
-    null,
-);
+const filteredPlaces = computed(() => {
+  const keyword = destinationSearch.value.trim();
+  const id = displayMode.value === "station" ? selectedStationId.value : selectedCityId.value;
+  return comparedPlaces.value.filter(place => !keyword || place.name.includes(keyword)
+    || place.city.city_name.includes(keyword)
+    || place.city.stations.some(station => station.station_name.includes(keyword)))
+    .sort((a, b) => Number(b.id === id) - Number(a.id === id));
+});
+const mapCities = computed(() => comparing.value
+  ? comparedPlaces.value.map(place => place.city)
+  : result.value?.cities ?? []);
+const mapCoverage = computed(() => comparing.value ? new Map(comparedPlaces.value.map(
+  place => [place.id, place.routes.length + "/" + participatingPages.value.length],
+)) : undefined);
+const mapOrigins = computed(() => (comparing.value ? participatingPages.value : [activePage.value]).flatMap(page => {
+  const city = findCity(page);
+  return city ? [{ city, stations: page.stations.filter(station =>
+    page.config.selectedOriginStationIds.includes(station.station_id)) }] : [];
+}));
+
+function findCity(page: OriginPage): City | undefined {
+  return cities.value.find(city => city.city_id === page.config.originCityId);
+}
+
+function pageName(page: OriginPage): string {
+  const name = findCity(page)?.name ?? "选择城市";
+  const matches = pages.value.filter(item => item.config.originCityId === page.config.originCityId);
+  return matches.length > 1 ? name + " " + (matches.findIndex(item => item.id === page.id) + 1) : name;
+}
+
+function selectPage(id: string): void {
+  activePageId.value = id;
+  originSearch.value = "";
+  originSearchFocused.value = false;
+  selectedCityId.value = null;
+  selectedStationId.value = null;
+}
+
+async function addPage(): Promise<void> {
+  const page = newPage();
+  pages.value.push(page);
+  selectPage(page.id);
+  initializeConcreteWindow();
+  await nextTick();
+  originInput.value?.focus();
+}
+
+function removePage(index: number): void {
+  if (pages.value.length <= 1) return;
+  const [removed] = pages.value.splice(index, 1);
+  excludedPageIds.value = excludedPageIds.value.filter(id => id !== removed.id);
+  if (removed.id === activePageId.value) selectPage(pages.value[Math.min(index, pages.value.length - 1)].id);
+  if (configuredPages.value.length < 2) resultView.value = "single";
+}
+
+function toggleParticipation(id: string): void {
+  if (excludedPageIds.value.includes(id)) {
+    excludedPageIds.value = excludedPageIds.value.filter(item => item !== id);
+  } else {
+    excludedPageIds.value = [...excludedPageIds.value, id];
+  }
+}
 const filteredCities = computed(() => {
   const keyword = destinationSearch.value.trim();
   if (!result.value) return [];
@@ -158,18 +286,18 @@ function beijingNow(): Date {
   return new Date(new Date().toLocaleString("en-US", { timeZone: "Asia/Shanghai" }));
 }
 
-function normalizeTimeWindow(): { start: string; end: string } {
-  if (timeMode.value === "concrete") {
+function normalizeTimeWindow(config: Config): { start: string; end: string } {
+  if (config.timeMode === "concrete") {
     return {
-      start: `${concreteStart.value}:00+08:00`,
-      end: `${concreteEnd.value}:00+08:00`,
+      start: `${config.concreteStart}:00+08:00`,
+      end: `${config.concreteEnd}:00+08:00`,
     };
   }
 
-  const start = nextWeekdayDate(weeklyStartDay.value, weeklyStartTime.value);
+  const start = nextWeekdayDate(config.weeklyStartDay, config.weeklyStartTime);
   const startWeekday = start.getDay() || 7;
-  let dayOffset = (weeklyEndDay.value - startWeekday + 7) % 7;
-  const [endHours, endMinutes] = weeklyEndTime.value.split(":").map(Number);
+  let dayOffset = (config.weeklyEndDay - startWeekday + 7) % 7;
+  const [endHours, endMinutes] = config.weeklyEndTime.split(":").map(Number);
   if (
     dayOffset === 0 &&
     (endHours < start.getHours() ||
@@ -209,9 +337,18 @@ function formatFullDateTime(value: string): string {
   }).format(new Date(value));
 }
 
-async function loadOriginStations(): Promise<void> {
-  stations.value = await api.stations(originCityId.value);
-  selectedOriginStationIds.value = stations.value.map(station => station.station_id);
+async function loadOriginStations(page = activePage.value, selectAll = true): Promise<void> {
+  page.stations = await api.stations(page.config.originCityId);
+  const ids = page.stations.map(station => station.station_id);
+  page.config.selectedOriginStationIds = selectAll ? ids
+    : page.config.selectedOriginStationIds.filter(id => ids.includes(id));
+}
+
+async function loadConfiguredStations(): Promise<void> {
+  const configured = configuredPages.value;
+  const outcomes = await Promise.allSettled(configured.map(page => loadOriginStations(page, false)));
+  const failed = configured.filter((_, index) => outcomes[index].status === "rejected");
+  if (failed.length) throw new Error("无法加载始发站：" + failed.map(pageName).join("、"));
 }
 
 function toggleOriginStation(stationId: string): void {
@@ -246,7 +383,7 @@ function closeOriginResults(): void {
 }
 
 async function selectOriginCity(city: City): Promise<void> {
-  if (city.city_id === originCityId.value) {
+  if (city.city_id === originCityId.value && stations.value.length) {
     originSearch.value = "";
     originSearchFocused.value = false;
     return;
@@ -270,16 +407,20 @@ async function refreshData(): Promise<void> {
     }
     if (disposed) return;
     if (job.state !== "completed") throw new Error(job.message || "数据任务已中断，请重试");
-    const oldName = originCity.value?.name;
+    const oldCities = new Map(cities.value.map(city => [city.city_id, city.name]));
     [cities.value, status.value] = await Promise.all([api.cities(), api.dataStatus()]);
-    originCityId.value = cities.value.find(city => city.name === oldName)?.city_id
-      ?? cities.value.find(city => city.name === DEFAULT_ORIGIN_CITY_NAME)?.city_id
-      ?? cities.value[0]?.city_id ?? "";
-    await loadOriginStations();
-    result.value = null;
+    for (const page of pages.value) {
+      page.result = null;
+      page.stations = [];
+      if (!findCity(page)) {
+        page.config.originCityId = cities.value.find(city =>
+          city.name === oldCities.get(page.config.originCityId))?.city_id ?? page.config.originCityId;
+      }
+    }
     selectedCityId.value = null;
     selectedStationId.value = null;
     refreshMessage.value = "";
+    await loadConfiguredStations();
   } catch (error) {
     errorMessage.value = error instanceof Error ? error.message : "刷新失败";
   } finally {
@@ -287,36 +428,41 @@ async function refreshData(): Promise<void> {
   }
 }
 
-async function calculate(): Promise<void> {
-  errorMessage.value = "";
-  if (!selectedOriginStationIds.value.length) {
-    errorMessage.value = "请至少选择一个始发站";
-    return;
+function queryPayload(page: OriginPage): QueryPayload {
+  const config = page.config;
+  const prefix = pageName(page) + "：";
+  if (!findCity(page)) throw new Error(prefix + "请选择始发城市");
+  if (!config.selectedOriginStationIds.length || !page.stations.length) {
+    throw new Error(prefix + "请至少选择一个始发站");
   }
-  if (!selectedTrainTypes.value.length) {
-    errorMessage.value = "请至少选择一种列车类型";
-    return;
+  if (!config.selectedTrainTypes.length) {
+    throw new Error(prefix + "请至少选择一种列车类型");
   }
-  if (!weeklyStartTime.value || !weeklyEndTime.value ||
-      (timeMode.value === "concrete" && (!concreteStart.value || !concreteEnd.value))) {
-    errorMessage.value = "请填写完整的出发和到达时间";
-    return;
+  const timeFields = config.timeMode === "concrete"
+    ? [config.concreteStart, config.concreteEnd] : [config.weeklyStartTime, config.weeklyEndTime];
+  if (!timeFields.every(Boolean)) {
+    throw new Error(prefix + "请填写完整的出发和到达时间");
   }
-  const window = normalizeTimeWindow();
-  const payload: QueryPayload = {
-    origin_city_id: originCityId.value,
-    origin_station_ids: [...selectedOriginStationIds.value],
+  const window = normalizeTimeWindow(config);
+  if (window.end <= window.start) throw new Error(prefix + "最晚到达时间须晚于最早出发时间");
+  return {
+    origin_city_id: config.originCityId,
+    origin_station_ids: [...config.selectedOriginStationIds],
     start_at: window.start,
     end_at: window.end,
-    train_types: selectedTrainTypes.value,
-    transfers_enabled: transfersEnabled.value,
-    max_transfers: transfersEnabled.value ? maxTransfers.value : 0,
-    min_transfer_minutes: minTransferMinutes.value,
+    train_types: [...config.selectedTrainTypes],
+    transfers_enabled: config.transfersEnabled,
+    max_transfers: config.transfersEnabled ? config.maxTransfers : 0,
+    min_transfer_minutes: config.minTransferMinutes,
   };
+}
 
+async function calculate(): Promise<void> {
+  errorMessage.value = "";
   loading.value = true;
   try {
-    result.value = await api.reachability(payload);
+    result.value = await api.reachability(queryPayload(activePage.value));
+    resultView.value = "single";
     lastQueryId.value = result.value.query_id;
     try { localStorage.setItem("tarinmap-last-query", result.value.query_id); } catch { /* 隐私模式允许不保存。 */ }
     status.value = result.value.data_status;
@@ -330,9 +476,28 @@ async function calculate(): Promise<void> {
   }
 }
 
+async function calculateComparison(): Promise<void> {
+  const selected = participatingPages.value;
+  if (!selected.length) return;
+  errorMessage.value = "";
+  loading.value = true;
+  try {
+    const results = await api.compare(selected.map(queryPayload));
+    selected.forEach((page, index) => { page.result = results[index]; });
+    status.value = results[0].data_status;
+    selectedCityId.value = null;
+    selectedStationId.value = null;
+  } catch (error) {
+    errorMessage.value = error instanceof Error ? error.message : "比较失败";
+  } finally {
+    loading.value = false;
+  }
+}
+
 function selectLocation(cityId: string, stationId?: string): void {
   selectedCityId.value = cityId;
   selectedStationId.value = stationId ?? null;
+  destinationsCollapsed.value = false;
   if (window.matchMedia("(max-width: 780px)").matches) mobileView.value = "list";
 }
 
@@ -359,12 +524,12 @@ function showExportVariant(includeTransfers: boolean): void {
   }
 }
 
-async function verify(leg: LegResult): Promise<void> {
-  if (!result.value || !leg.service_date) return;
+async function verify(leg: LegResult, query = result.value): Promise<void> {
+  if (!query || !leg.service_date) return;
   verifying.value = true;
   errorMessage.value = "";
   try {
-    verification.value = await api.verify(result.value.query_id, leg.train_code, leg.service_date);
+    verification.value = await api.verify(query.query_id, leg.train_code, leg.service_date);
   } catch (error) {
     errorMessage.value = error instanceof Error ? error.message : "核验失败";
   } finally {
@@ -395,6 +560,7 @@ async function restoreQuery(): Promise<void> {
     minTransferMinutes.value = saved.request.min_transfer_minutes;
     await nextTick();
     result.value = saved;
+    resultView.value = "single";
     selectedCityId.value = saved.cities[0]?.city_id ?? null;
     selectedStationId.value = null;
   } catch (error) {
@@ -405,7 +571,6 @@ async function restoreQuery(): Promise<void> {
 }
 
 onMounted(async () => {
-  initializeConcreteWindow();
   if (exportBootstrap) {
     const saved = exportBootstrap.result;
     status.value = saved.data_status;
@@ -432,31 +597,48 @@ onMounted(async () => {
     selectedCityId.value = saved.cities[0]?.city_id ?? null;
     return;
   }
+  loading.value = true;
   try {
     [cities.value, status.value] = await Promise.all([
       api.cities(),
       api.dataStatus(),
     ]);
-    originCityId.value = cities.value.find(city => city.name === DEFAULT_ORIGIN_CITY_NAME)?.city_id
-      ?? cities.value[0]?.city_id ?? "";
-    await loadOriginStations();
+    let restored = false;
     try {
       lastQueryId.value = localStorage.getItem("tarinmap-last-query");
+      const saved = JSON.parse(localStorage.getItem(profilesKey) ?? "null");
+      if (Array.isArray(saved?.pages) && saved.pages.length && saved.pages.every(
+        (page: OriginPage) => typeof page.id === "string" && typeof page.config?.originCityId === "string",
+      )) {
+        pages.value = saved.pages.map((page: OriginPage) => newPage(page.id, { ...defaultConfig(), ...page.config }));
+        activePageId.value = pages.value.find(page => page.id === saved.active)?.id ?? pages.value[0].id;
+        excludedPageIds.value = Array.isArray(saved.excluded) ? saved.excluded : [];
+        restored = true;
+      }
     } catch { /* 已清理的历史结果不影响新查询。 */ }
+    if (restored) {
+      await loadConfiguredStations();
+    } else {
+      initializeConcreteWindow();
+      originCityId.value = cities.value.find(city => city.name === DEFAULT_ORIGIN_CITY_NAME)?.city_id
+        ?? cities.value[0]?.city_id ?? "";
+      if (originCityId.value) await loadOriginStations();
+    }
   } catch (error) {
     errorMessage.value = error instanceof Error ? error.message : "初始化失败";
+  } finally {
+    loading.value = false;
   }
 });
 
-// 条件变更后移除旧结果，避免将旧范围误当成当前条件计算结果。
-watch([timeMode, concreteStart, concreteEnd, weeklyStartDay, weeklyStartTime,
-  weeklyEndDay, weeklyEndTime, transfersEnabled, maxTransfers, minTransferMinutes,
-  selectedTrainTypes, selectedOriginStationIds], () => {
+watch(() => ({
+  pages: pages.value.map(({ id, config }) => ({ id, config })),
+  active: activePageId.value,
+  excluded: excludedPageIds.value,
+}), saved => {
     if (exportMode) return;
-    result.value = null;
-    selectedCityId.value = null;
-    selectedStationId.value = null;
-  }, { deep: true });
+  try { localStorage.setItem(profilesKey, JSON.stringify(saved)); } catch { /* 浏览器可能禁止持久化。 */ }
+}, { deep: true });
 watch(transfersEnabled, value => {
   if (exportMode) showExportVariant(value);
 });
@@ -525,6 +707,20 @@ onBeforeUnmount(() => { disposed = true; });
           {{ controlsCollapsed ? "›" : "‹" }}
           <span v-if="controlsCollapsed">查询条件</span>
         </button>
+        <nav v-if="!exportMode && !controlsCollapsed" class="origin-tabs" aria-label="始发城市配置">
+          <div class="origin-tab-strip">
+            <div v-for="(page, index) in pages" :key="page.id" class="origin-tab"
+              :class="{ active: page.id === activePageId }">
+              <button type="button" :aria-pressed="page.id === activePageId"
+                :disabled="loading || refreshing" @click="selectPage(page.id)">{{ pageName(page) }}</button>
+              <button v-if="pages.length > 1 && page.id === activePageId" type="button"
+                :aria-label="'删除配置 ' + pageName(page)" :disabled="loading || refreshing"
+                @click="removePage(index)">×</button>
+            </div>
+          </div>
+          <button type="button" class="origin-tab-add" aria-label="新增城市配置"
+            :disabled="loading || refreshing" @click="addPage">＋</button>
+        </nav>
         <fieldset v-show="!controlsCollapsed" class="panel-content" :disabled="refreshing || loading" style="border:0;padding:0;margin:0;min-width:0">
         <section class="panel-section">
           <div class="section-heading">
@@ -533,6 +729,7 @@ onBeforeUnmount(() => { disposed = true; });
           </div>
           <div class="origin-picker">
             <input
+              ref="originInput"
               v-model="originSearch"
               class="field"
               type="search"
@@ -659,7 +856,12 @@ onBeforeUnmount(() => { disposed = true; });
       <section class="result-area">
         <div class="result-toolbar">
           <div>
-            <p v-if="result">
+            <p v-if="comparing && comparisonReady">
+              <strong>{{ comparedPlaces.length }}</strong> {{ displayMode === "city" ? "个地点分组" : "个车站" }}
+              <span>·</span>{{ participatingPages.length }} 项始发配置
+            </p>
+            <p v-else-if="comparing" class="muted">选择始发城市后计算比较</p>
+            <p v-else-if="result">
               <strong>{{ result.reachable_city_count }}</strong> 个地点分组
               <span>·</span>
               <strong>{{ result.reachable_station_count }}</strong> 个车站
@@ -668,11 +870,11 @@ onBeforeUnmount(() => { disposed = true; });
           </div>
           <div class="toolbar-actions">
             <button v-if="!exportMode && lastQueryId" :disabled="loading || refreshing" @click="restoreQuery">恢复上次查询</button>
-            <button v-if="!exportMode" :disabled="!result" @click="exportResult('online')">导出 HTML</button>
-            <button v-if="!exportMode" :disabled="!result" @click="exportResult('offline')">离线压缩包</button>
+            <button v-if="!exportMode && !comparing" :disabled="!result" @click="exportResult('online')">导出 HTML</button>
+            <button v-if="!exportMode && !comparing" :disabled="!result" @click="exportResult('offline')">离线压缩包</button>
           </div>
         </div>
-        <p v-if="result" class="muted">按城市归属聚合，归属待核验车站独立分组。结果使用 {{ result.data_status.version }}，计算于 {{ formatFullDateTime(result.generated_at) }}；{{ formatDateTime(result.request.start_at) }} 至 {{ formatDateTime(result.request.end_at) }}。</p>
+        <p v-if="result && !comparing" class="muted">按城市归属聚合，归属待核验车站独立分组。结果使用 {{ result.data_status.version }}，计算于 {{ formatFullDateTime(result.generated_at) }}；{{ formatDateTime(result.request.start_at) }} 至 {{ formatDateTime(result.request.end_at) }}。</p>
 
         <div class="mobile-tabs">
           <button :class="{ active: mobileView === 'map' }" @click="mobileView = 'map'">地图</button>
@@ -688,15 +890,34 @@ onBeforeUnmount(() => { disposed = true; });
         >
           <div class="map-column">
             <ReachabilityMap
-              :origin="originCity"
-              :origin-stations="selectedOriginStations"
-              :cities="result?.cities ?? []"
+              v-model:display-mode="displayMode"
+              :origins="mapOrigins"
+              :cities="mapCities"
+              :coverage="mapCoverage"
               :selected-city-id="selectedCityId"
               :selected-station-id="selectedStationId"
               :use-export-basemap="exportMode"
               @select="selectLocation"
-            />
-            <div v-if="!result" class="empty-map">
+            >
+              <template v-if="!exportMode && originOptions.length > 1" #comparison>
+                <div class="comparison-views" role="group" aria-label="结果视图">
+                  <button v-for="view in views" :key="view.id" type="button" :aria-pressed="resultView === view.id"
+                    :disabled="loading || refreshing" @click="resultView = view.id">{{ view.name }}</button>
+                </div>
+                <template v-if="comparing">
+                  <div class="comparison-origins" role="group" aria-label="参与比较的始发城市">
+                    <button v-for="origin in originOptions" :key="origin.id" type="button"
+                      :aria-pressed="origin.selected" :disabled="loading || refreshing"
+                      @click="toggleParticipation(origin.id)">{{ origin.name }}</button>
+                  </div>
+                  <button v-if="!comparisonReady && participatingPages.length" class="comparison-calculate"
+                    type="button" :disabled="loading || refreshing" @click="calculateComparison">
+                    {{ loading ? "正在计算…" : "计算比较" }}
+                  </button>
+                </template>
+              </template>
+            </ReachabilityMap>
+            <div v-if="!result && !comparing" class="empty-map">
               <div class="compass">↗</div>
               <h2>从一座城市出发</h2>
               <p>在地图上查看指定时间窗口内，铁路能够抵达的城市和车站。</p>
@@ -716,10 +937,56 @@ onBeforeUnmount(() => { disposed = true; });
             </button>
             <div v-show="!destinationsCollapsed" class="destination-content">
             <div class="destination-header">
-              <div><h2>可达地点</h2><p>按最早到达时间排序</p></div>
+              <div><h2>可达地点</h2><p>{{ resultView === "intersection" ? "按最晚一方到达时间排序" : "按最早到达时间排序" }}</p></div>
               <input v-model="destinationSearch" type="search" placeholder="搜索城市或车站" />
             </div>
-            <div v-if="!result" class="empty-list">尚未生成查询结果</div>
+            <template v-if="listByPlace">
+              <div v-if="comparing && !participatingPages.length" class="empty-list">请在地图中选择参与比较的始发城市</div>
+              <div v-else-if="comparing && !comparisonReady" class="empty-list">请在地图中计算比较</div>
+              <div v-else-if="!comparing && !result" class="empty-list">尚未生成查询结果</div>
+              <div v-else-if="!filteredPlaces.length" class="empty-list">
+                {{ !destinationSearch && resultView === "intersection" ? "没有共同可达的地点" : "没有匹配的地点" }}
+              </div>
+              <div v-else class="city-list">
+                <article v-for="place in filteredPlaces" :key="place.id" class="city-card"
+                  :class="{ selected: place.id === (place.stationId ? selectedStationId : selectedCityId) }">
+                  <button type="button" class="city-summary" @click="selectLocation(place.city.city_id, place.stationId)">
+                    <span v-if="comparing" class="route-badge">{{ place.routes.length }}/{{ participatingPages.length }}</span>
+                    <span v-else class="route-badge" :class="{ transfer: !place.city.direct_available }">
+                      {{ place.city.direct_available ? "直" : "换" }}
+                    </span>
+                    <span class="city-copy">
+                      <strong>{{ place.name }}</strong>
+                      <small>{{ place.stationId ? place.city.city_name : place.city.stations.length + " 个可达车站" }}</small>
+                    </span>
+                    <time>{{ formatDateTime(place.arrival) }}</time>
+                  </button>
+                  <div v-if="place.id === (place.stationId ? selectedStationId : selectedCityId)" class="itinerary">
+                    <section v-for="{ origin, query, station } in place.routes" :key="origin.id">
+                      <div class="station-title">
+                        <strong>{{ comparing ? origin.name + " → " : "" }}{{ station.station_name }}</strong>
+                        <span>{{ station.transfers }} 次换乘</span>
+                      </div>
+                      <p v-if="comparing" class="comparison-window">
+                        查询时段 {{ formatDateTime(query.request.start_at) }} — {{ formatDateTime(query.request.end_at) }}
+                      </p>
+                      <div v-for="(leg, index) in station.legs" :key="index" class="leg-row">
+                        <div class="train-code">{{ leg.train_code }}</div>
+                        <div>
+                          <p>{{ leg.from_station_name }} → {{ leg.to_station_name }}</p>
+                          <small>{{ formatDateTime(leg.departure_at) }} — {{ formatDateTime(leg.arrival_at) }}</small>
+                          <button v-if="leg.service_date && query.data_status.source_kind === 'external'"
+                            class="text-button" :disabled="verifying" @click="verify(leg, query)">
+                            {{ verifying ? "核验中…" : "12306 经停核验" }}
+                          </button>
+                        </div>
+                      </div>
+                    </section>
+                  </div>
+                </article>
+              </div>
+            </template>
+            <div v-else-if="!result" class="empty-list">尚未生成查询结果</div>
             <div v-else-if="!filteredCities.length" class="empty-list">没有匹配的地点</div>
             <div v-else class="city-list">
               <article

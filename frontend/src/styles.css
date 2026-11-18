@@ -219,6 +219,77 @@ button {
   min-width: 0;
 }
 
+.origin-tabs {
+  display: flex;
+  align-items: flex-start;
+  gap: 5px;
+  margin: -5px 26px 14px 0;
+  border-bottom: 1px solid #ded9ce;
+}
+
+.origin-tab-strip {
+  display: flex;
+  gap: 4px;
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+
+.origin-tab {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  border-radius: 8px 8px 0 0;
+  background: #efe9df;
+}
+
+.origin-tabs button {
+  min-height: 29px;
+  padding: 4px 8px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: #5e554a;
+  font: inherit;
+  font-size: 12px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.origin-tab.active {
+  background: #dcebea;
+}
+
+.origin-tab.active button,
+.origin-tabs .origin-tab-add {
+  color: #176a70;
+}
+
+.comparison-views,
+.comparison-origins {
+  display: flex;
+  gap: 4px;
+  min-width: 0;
+  padding-top: 4px;
+  border-top: 1px solid #e9e2d6;
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+
+.comparison-views button { flex: 1; }
+.comparison-origins button { flex: 0 0 auto; white-space: nowrap; }
+
+.map-display-controls :is(.comparison-views, .comparison-origins) button[aria-pressed="true"],
+.map-display-controls .comparison-calculate {
+  background: #dcebea;
+  color: #176a70;
+}
+
+.comparison-window {
+  margin: 4px 0;
+  color: #60777e;
+  font-size: 11px;
+}
+
 .panel-section {
   padding: 0 0 20px;
   border-bottom: 1px solid rgb(31 27 22 / 8%);

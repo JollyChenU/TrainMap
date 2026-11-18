@@ -122,6 +122,24 @@ def test_online_export_embeds_direct_variant_only_when_transfers_are_enabled() -
     assert bootstrap["direct_result"]["request"]["max_transfers"] == 0
 
 
+def test_compare_calculates_individual_queries_on_one_snapshot() -> None:
+    query = {
+        "start_at": "2026-11-20T20:00:00+08:00",
+        "end_at": "2026-11-21T12:00:00+08:00",
+        "train_types": ["G", "D", "K"],
+    }
+    response = client.post("/api/reachability/compare", json=[
+        {**query, "origin_city_id": "beijing"},
+        {**query, "origin_city_id": "hangzhou", "transfers_enabled": True, "max_transfers": 1},
+    ])
+    assert response.status_code == 200
+    first, second = response.json()
+    assert [first["origin_city_id"], second["origin_city_id"]] == ["beijing", "hangzhou"]
+    assert first["data_status"] == second["data_status"]
+    assert first["request"]["max_transfers"] == 0
+    assert second["request"]["max_transfers"] == 1
+
+
 def test_invalid_window_returns_validation_error() -> None:
     """到达截止时间不晚于出发时间时应返回可理解的校验错误。"""
 

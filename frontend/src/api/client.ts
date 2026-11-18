@@ -43,4 +43,10 @@ export const api = {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
     }),
+  compare: (payloads: QueryPayload[]) =>
+    request<ReachabilityResponse[]>("/api/reachability/compare", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payloads),
+    }),
 };

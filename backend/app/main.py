@@ -198,6 +198,20 @@ def reachability(request: ReachabilityRequest) -> ReachabilityResponse:
         return _calculate(request)
 
 
+@app.post("/api/reachability/compare", response_model=list[ReachabilityResponse])
+def compare_reachability(requests: list[ReachabilityRequest]) -> list[ReachabilityResponse]:
+    """在同一铁路快照下计算本次比较的所有出发配置。"""
+
+    with snapshot_lock:
+        results = []
+        for index, request in enumerate(requests, start=1):
+            try:
+                results.append(_calculate(request))
+            except HTTPException as error:
+                raise HTTPException(error.status_code, f"第 {index} 项始发配置：{error.detail}") from error
+        return results
+
+
 def _calculate(request: ReachabilityRequest) -> ReachabilityResponse:
     """整个计算读取同一版本快照，避免刷新期间混用站点和车次。"""
 
